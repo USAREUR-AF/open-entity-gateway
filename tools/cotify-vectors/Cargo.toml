@@ -1,0 +1,12 @@
+[package]
+name = "cotify-vectors"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+cotify = { path = "../../../first-bite/cotify" }
+chrono = "0.4"
+serde_json = "1"
+
+[workspace]
