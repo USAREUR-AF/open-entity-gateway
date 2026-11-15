@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "open-entity-gateway-picogrid-ecn"
+version = "0.1.0"
+description = "Optional open-entity-gateway adapter that publishes tracks as entities to a Picogrid Expeditionary C2 Node through Picogrid's ECN SDK."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11,<3.15"
+# picogrid-ecn-client is Picogrid's SDK under the Mozilla Public License 2.0.
+# It is a dependency, installed from PyPI; no file of it is in this repository.
+dependencies = [
+  "open-entity-gateway==0.1.0",
+  "picogrid-ecn-client==0.2.0",
+]
+
+[project.entry-points."open_entity_gateway.adapters"]
+picogrid-ecn = "open_entity_gateway_picogrid_ecn:PicogridECN"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/open_entity_gateway_picogrid_ecn"]
