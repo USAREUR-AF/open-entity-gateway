@@ -1,0 +1,7 @@
+-c runtime.txt
+pytest
+ruff
+mypy
+types-PyYAML
+xmlschema
+asterix4py

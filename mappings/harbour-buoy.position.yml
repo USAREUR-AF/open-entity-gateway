@@ -1,0 +1,26 @@
+# The Position message of the synthetic harbour-buoy dictionary (interface
+# BUOY, from USAREUR-AF/hello-galaxy-first-bite) becomes one track per buoy.
+match:
+  subsystem: BUOY
+  message_type: Position
+
+uid: [buoy_number]
+# A lookup, as first-bite's cot transform takes it: buoy 7 is friendly, any
+# other buoy neutral. Sea surface either way.
+type:
+  field: buoy_number
+  values: { "7": "a-f-S" }
+  default: "a-n-S"
+position:
+  geodetic: [latitude, longitude, antenna_height]
+stale_minutes: 3
+
+name: ["Buoy", { field: buoy_number }]
+motion:
+  course: drift_course    # degrees from true north
+  speed: drift_speed      # metres per second
+asterix:
+  track_number: { field: buoy_number }
+  simulated: true
+sapient:
+  classification: "Buoy"

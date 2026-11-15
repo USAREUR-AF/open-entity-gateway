@@ -1,0 +1,36 @@
+# The Position message of first-bite's synthetic weather-station dictionary
+# (interface WX) becomes one track per station.
+match:
+  subsystem: WX
+  message_type: Position
+  dictionary: weather-station
+
+# These five lines are the `cot:` block of first-bite's docs/cot-to-tak.md,
+# unchanged: the same keys mean the same here.
+uid: [station_id]
+type:
+  value: "a-f-G"
+position:
+  geodetic: [latitude, longitude, altitude]   # degrees, degrees, metres above the WGS 84 ellipsoid
+stale_minutes: 10
+
+# The gateway's own keys.
+time: capture            # the default: the record's capture time
+name: { field: station_id }
+
+# Blocks read by one adapter each; an adapter not configured ignores its block.
+asterix:
+  simulated: true
+  altitude_source: gnss
+lattice:
+  entity_id: ["weather-station", { record: subsystem }, { field: station_id }]
+  template: TEMPLATE_ASSET
+  platform_type: "Weather station"
+  indicators: { simulated: true }
+  provenance:
+    integration_name: "open-entity-gateway"
+    data_type: ["weather-station", { record: subsystem }, { record: message_type }]
+    source_id: { field: station_id }
+picogrid_ecn:
+  category: DEVICE
+  type: "weather-station"
