@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "open-entity-gateway-lattice"
+version = "0.1.0"
+description = "Optional open-entity-gateway adapter that publishes tracks as entities to Lattice through the Lattice SDK for Python, which the user installs separately."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+# The Lattice SDK (anduril-lattice-sdk) is deliberately NOT a dependency.
+# It is not open source: installing or using it accepts its vendor's licence
+# agreement. The user installs it, if they accept that agreement; see README.md.
+dependencies = ["open-entity-gateway==0.1.0"]
+
+[project.entry-points."open_entity_gateway.adapters"]
+lattice = "open_entity_gateway_lattice:Lattice"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/open_entity_gateway_lattice"]
