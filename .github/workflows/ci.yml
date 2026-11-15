@@ -1,0 +1,81 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# No step installs a vendor SDK: the vendor packages' publishing tests skip
+# without one, so no runner accepts a vendor's licence agreement.
+jobs:
+  check:
+    name: lint, type check and tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: install the pinned dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements/runtime.txt -r requirements/dev.txt -r requirements/tools.txt
+          python -m pip install --no-deps -e . -e vendors/lattice
+
+      - name: no vendor SDK is installed
+        run: |
+          ! python -c "import anduril" 2>/dev/null
+          ! python -c "import picogrid_ecn_client" 2>/dev/null
+
+      - name: fetch the pinned CoT schemas and SAPIENT protos
+        run: |
+          python tools/fetch-cot-xsd.py
+          python tools/fetch-sapient-proto.py
+
+      - name: lint
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: type check
+        run: mypy src vendors/lattice/src
+
+      - name: tests
+        run: python -m pytest -rs tests vendors/lattice/tests
+
+      - name: shell scripts
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck tests/e2e/run-on-build-host.sh
+
+  package:
+    name: the packages build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: build the core, with the SAPIENT bindings, and the vendor packages (no vendor SDK is installed)
+        run: |
+          python -m pip install --require-hashes -r requirements/build.txt -r requirements/tools.txt
+          python tools/fetch-sapient-proto.py
+          for package in . vendors/lattice vendors/picogrid-ecn; do
+            python -m build --no-isolation --outdir dist "$package"
+          done
+          python -m zipfile -l dist/open_entity_gateway-*.whl | grep -q "_generated/sapient_msg/bsi_flex_335_v2_0/sapient_message_pb2.py"
+          ls -l dist

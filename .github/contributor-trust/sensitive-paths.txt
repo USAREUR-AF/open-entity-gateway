@@ -1,0 +1,23 @@
+# Paths where a change from a contributor outside the maintainers needs a
+# recorded security review, even when the contributor is known (ADR 1221 in
+# USAREUR-AF/goatcore). One glob per line: `**` crosses directories, `*` stays
+# in one directory, a pattern with no slash matches that file name anywhere.
+# Owners edit this file; it takes effect when the edit merges.
+
+# What runs in CI, what is pinned, what is fetched
+.github/**
+requirements/**
+vendors/*/requirements.txt
+pyproject.toml
+vendors/*/pyproject.toml
+tools/**
+Dockerfile*
+CODEOWNERS
+SECURITY.md
+
+# Code that opens sockets, handles TLS or credentials, or runs servers in tests
+src/open_entity_gateway/transport.py
+src/open_entity_gateway/inputs/**
+src/open_entity_gateway/adapters/**
+vendors/*/src/**
+tests/e2e/**
