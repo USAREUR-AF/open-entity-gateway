@@ -14,7 +14,7 @@ PROJECT=oeg-e2e
 NETWORK="${PROJECT}_default"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
-# shellcheck disable=SC2329  # called by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # called by the EXIT trap; older and newer shellcheck name it differently
 cleanup() {
   if [ "${OEG_E2E_KEEP:-0}" = 1 ]; then return; fi
   docker rm -f oeg-e2e-apex >/dev/null 2>&1 || true
