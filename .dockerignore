@@ -1,0 +1,6 @@
+.git
+.venv
+.cache
+**/__pycache__
+src/open_entity_gateway/adapters/sapient/_generated
+tools/cotify-vectors/target

@@ -1,0 +1,30 @@
+# generated: SAPIENT bindings (tools/fetch-sapient-proto.py), MITRE schemas (tools/fetch-cot-xsd.py)
+src/open_entity_gateway/adapters/sapient/_generated/
+.cache/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.venv-*/
+venv/
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# rust (tools/cotify-vectors)
+target/
+
+# credentials, keys, captures: never committed (docs/handling.md)
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+*.pcap
+*.pcapng
+
+.DS_Store

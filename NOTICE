@@ -1,0 +1,46 @@
+open-entity-gateway (part of goat)
+Copyright 2026 U.S. Federal Government (in countries where recognized)
+
+Portions of this work written by U.S. Federal government employees within the
+scope of their federal employment are not subject to copyright protection in the
+United States (17 U.S.C. 105) and are in the public domain there. In countries
+where copyright protection is available, those portions are released under the
+Apache License, Version 2.0. Merged contributions from private contributors are
+released under the same License. See INTENT.md.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE at
+the root of this repository).
+
+Material fetched at build or test time, not kept in this repository
+
+- SAPIENT (BSI Flex 335 v2.0) proto files, from
+  https://github.com/dstl/SAPIENT-Proto-Files at commit
+  244a741c13bcee628f84944aef91e4a66854bd7d. Crown copyright, Apache License 2.0.
+  tools/fetch-sapient-proto.py changes their import paths and generates Python
+  bindings; the generated files carry the proto files' LICENCE.txt.
+- Cursor-on-Target schemas (base event, contact, track) by The MITRE
+  Corporation, "Approved for Public Release; Distribution Unlimited", fetched
+  by tools/fetch-cot-xsd.py from https://github.com/TAK-Product-Center/atak-civ
+  at commit 9f6893dd657feacc35ec5de03dad721c2e44170e for tests only.
+
+Example data
+
+examples/records/ holds records published by first-bite
+(https://github.com/USAREUR-AF/first-bite, Apache License 2.0) from its
+synthetic weather-station dictionary, and from the synthetic harbour-buoy
+dictionary of hello-galaxy-first-bite
+(https://github.com/USAREUR-AF/hello-galaxy-first-bite, Apache License 2.0).
+tests/vectors/cotify.jsonl holds events written by first-bite's cotify crate.
+
+Optional vendor adapters
+
+vendors/picogrid-ecn depends on Picogrid's ECN SDK (picogrid-ecn-client,
+Mozilla Public License 2.0), installed from PyPI. vendors/lattice works with
+the Lattice SDK for Python (anduril-lattice-sdk), which is not open source and
+is not a dependency: each user installs it separately under the Anduril Lattice
+Software Development Kit License Agreement. No file of either SDK is in this
+repository, and the Apache License of this repository grants nothing in them.
+
+Names of companies and products appear only to state which published
+interface an adapter speaks. All trademarks belong to their owners. This
+project is not affiliated with, sponsored by or endorsed by any of them.
