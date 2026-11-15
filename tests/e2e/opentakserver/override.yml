@@ -1,0 +1,24 @@
+# Overrides for OpenTAKServer-Docker's docker-compose.yml (fetched at a pinned
+# commit by run-on-build-host.sh; not kept here). Nothing is published on the
+# host: the test runner reaches the servers on the compose network only.
+services:
+  ots:
+    ports: !reset []
+    depends_on: !override
+      rabbitmq:
+        condition: service_healthy
+      ots-db:
+        condition: service_started
+  # The EUD handlers open a RabbitMQ channel per client; started before the
+  # broker is up, they drop every client's first event.
+  ots_eud_handler:
+    ports: !reset []
+    depends_on:
+      ots:
+        condition: service_healthy
+  ots_eud_handler_ssl:
+    ports: !reset []
+  ots-db:
+    ports: !reset []
+  rabbitmq:
+    ports: !reset []
