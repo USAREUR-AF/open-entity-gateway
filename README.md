@@ -41,6 +41,8 @@ Status words: **built** (the code exists and its unit tests pass), **measured** 
 | TacticalAPI, gRPC (`Situation`, `BlueForceTracking`, `OwnPose`) | Rheinmetall | Germany | public repository with protos and a C# test client | EPL-2.0 | designed, not built | none | [Rheinmetall/tacticalapi](https://github.com/Rheinmetall/tacticalapi), 2026-11-15 |
 | Skydio Cloud API (REST, OpenAPI) | Skydio | US | public documentation | API terms: internal business use; distribution needs Skydio's written approval | not built | none | [Skydio API docs](https://apidocs.skydio.com/reference/introduction), [API terms](https://www.skydio.com/legal/api-terms-of-service), 2026-11-15 |
 
+The vendors named here are the integrations built or considered so far. Their presence is not an endorsement or a preference. The list is expected to grow, and integrations for other vendors are welcome.
+
 What each built adapter sends and how it was tested: [docs/adapters/](docs/adapters/). What a designed or not-built vendor adapter would need: [docs/vendors.md](docs/vendors.md). Controlled military data links and message standards are out of scope: Link 16, JREAP, VMF, ADatP-3, JC3IEDM.
 
 ## Neutrality
