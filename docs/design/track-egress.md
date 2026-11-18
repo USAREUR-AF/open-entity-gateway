@@ -61,4 +61,13 @@ Each step is one pull request that can be reverted on its own.
 
 ## Tracking
 
-Issues are linked from each repository once opened.
+| Step | Issue |
+|---|---|
+| 1 | [open-entity-gateway#6](https://github.com/USAREUR-AF/open-entity-gateway/issues/6) |
+| 2 | [open-entity-gateway#7](https://github.com/USAREUR-AF/open-entity-gateway/issues/7) |
+| 3 | [goat-transformers#14](https://github.com/USAREUR-AF/goat-transformers/issues/14) |
+| 4 | [open-entity-gateway#8](https://github.com/USAREUR-AF/open-entity-gateway/issues/8) |
+| 5 | [octo-pod#34](https://github.com/USAREUR-AF/octo-pod/issues/34) |
+| 6 | [open-billie#29](https://github.com/USAREUR-AF/open-billie/issues/29), [first-bite#73](https://github.com/USAREUR-AF/first-bite/issues/73) |
+
+OARIS and C2SIM as goat-transformers packs: [goat-transformers#15](https://github.com/USAREUR-AF/goat-transformers/issues/15).
