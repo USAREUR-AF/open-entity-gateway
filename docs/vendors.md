@@ -39,3 +39,19 @@ Two are built: [Lattice](adapters/lattice.md) and [Picogrid ECN](adapters/picogr
 ## Skydio: Cloud API (US)
 
 **Published:** REST documentation with an OpenAPI document ([Skydio API docs](https://apidocs.skydio.com/reference/introduction)) for fleet, vehicle and telemetry data. The [API terms](https://www.skydio.com/legal/api-terms-of-service) permit internal business use and require Skydio's written approval for commercial distribution. **Status:** not built. The API exposes the vendor's own fleet data rather than taking tracks from other sources.
+
+## Companies with no published integration interface found
+
+Searched on 2026-11-18 for an integration interface each company publishes (a specification, an SDK or API documentation readable without a contract). None was found for the companies below. An adapter needs a published interface, so none is planned. Where a company's own material names an open standard, the gateway's adapter for that standard is the route.
+
+| Company | Country | What the company's material says | Route through an open standard |
+|---|---|---|---|
+| Dedrone | US | DedroneTracker.AI, a counter-drone command and control product; a third-party analyst describes it as SAPIENT compliant ([Dedrone](https://www.dedrone.com/white-papers/counter-uas)) | SAPIENT, if confirmed by the company |
+| DroneShield | Australia | DroneSentry-C2 lists a RESTful API and a gRPC API, a TAK plugin and involvement in SAPIENT; whether the API documentation is public is not confirmed ([DroneSentry-C2](https://www.droneshield.com/sentry-c2), [TAK plugin](https://asiapacificdefencereporter.com/droneshield-releases-rfpatrol-plugin-for-tak-ecosystem/)) | Cursor-on-Target, SAPIENT |
+| Helsing | Germany | Altra lists "open interfaces" and third-party effector integration; integration with Systematic's SitaWare is by partnership ([Altra](https://helsing.ai/altra), [Breaking Defense](https://breakingdefense.com/2025/09/helsing-systematic-partner-on-ai-enabled-swarm-capabilities-for-european-recon-strikes/)) | none named |
+| Hensoldt | Germany | Supplies radars to other companies' counter-drone systems; no interface document of its own was found | none named |
+| Kongsberg | Norway | The Protector counter-drone product sheet names ASTERIX as the interface to higher-level systems ([product sheet](https://www.kongsberg.com/globalassets/kongsberg-defence--aerospace/1.-what-we-do/1.3-defence--security/protector-cuas/cuas-product-sheet-191125.pdf)) | ASTERIX |
+| Saab | Sweden | The counter-drone brochure describes an open architecture integrated through a partner ecosystem; no interface specification is named ([brochure](https://www.saab.com/contentassets/807c9fd369ee4baf8815fe86a0eb4c09/saab-counter-uas-solution.pdf)) | none named |
+| Thales | France | HexaForce is described as built on open standards and tested at NATO CWIX 2026 ([Airforce Technology](https://www.airforce-technology.com/news/thales-hexaforce-command-platform/)); Thales is a contributor to OMG's OARIS radar interface | OARIS (not built) |
+
+Companies not yet searched are not listed here. A contribution that adds one, with its sources, is welcome.
