@@ -1,5 +1,8 @@
 """One record in; at most one track out, to every destination or to none.
 
+A Canonical Track v2 object is accepted wherever a record is: it is first
+turned into a record (canonical_track.py) and then mapped like any other.
+
 A record that no mapping matches is skipped. A record a mapping matches is
 turned into a track, then every destination's adapter writes its payload. Only
 when every payload was written is anything sent: a record that cannot fill
@@ -24,6 +27,7 @@ from typing import Any
 import yaml
 
 from .adapter import VENDOR_BLOCKS, Adapter, ConfigError, DeliveryError, available_adapters
+from .canonical_track import is_canonical_track, track_record
 from .mapping import Mapping, MappingError, load_mappings, select
 from .record import RecordError
 
@@ -123,6 +127,12 @@ class Gateway:
         if not isinstance(record, dict):
             log.warning("refused: not a record, a JSON %s", type(record).__name__)
             return REFUSED
+        if is_canonical_track(record):
+            try:
+                record = track_record(record)
+            except RecordError as error:
+                log.warning("refused a Canonical Track v2: %s; nothing sent", error)
+                return REFUSED
         mapping = select(self.mappings, record)
         if mapping is None:
             return SKIPPED
