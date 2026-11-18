@@ -26,6 +26,7 @@ dependencies = [
 # tools/fetch-sapient-proto.py; they need the protobuf runtime.
 sapient = ["protobuf>=7.35,<8"]
 zmq = ["pyzmq>=26,<28"]
+zenoh = ["eclipse-zenoh==1.9.0"]
 
 [project.scripts]
 open-entity-gateway = "open_entity_gateway.cli:main"
@@ -69,5 +70,5 @@ warn_unused_ignores = false
 exclude = ["_generated/"]
 
 [[tool.mypy.overrides]]
-module = ["cbor2", "zmq", "anduril", "anduril.*", "asterix4py", "xmlschema", "open_entity_gateway.adapters.sapient._generated.*", "google.protobuf.*"]
+module = ["cbor2", "zmq", "zenoh", "anduril", "anduril.*", "asterix4py", "xmlschema", "open_entity_gateway.adapters.sapient._generated.*", "google.protobuf.*"]
 ignore_missing_imports = true
