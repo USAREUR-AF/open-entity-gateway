@@ -17,6 +17,7 @@ A mapping file says which records become tracks and where each value of a track 
 | `time` | no, default `capture` | `capture`: the record's capture time (`timestamp`); `received`: the moment the gateway received the record |
 | `name` | no | a display name, in any value form below |
 | `motion.course`, `motion.speed` | no, together | field names of course over ground in degrees from true north and speed in metres per second |
+| `optional` | no | the altitude field and the motion fields that may be absent or null: the track then has no altitude, or no motion. Any other field listed is refused. [mappings/canonical-track-v2.yml](../mappings/canonical-track-v2.yml) uses it, because a Canonical Track v2 may carry neither |
 | `asterix`, `sapient`, `lattice`, `picogrid_ecn` | no | one block per adapter, read by that adapter only; see [adapters/](adapters/) |
 
 The track's affiliation and battle dimension are read from the CoT type, as its atoms define them: `a-f-G` is friend, ground; `a-h-A` hostile, air. Each adapter writes them in its interface's terms.
@@ -81,3 +82,7 @@ With [mappings/weather-station.position.yml](../mappings/weather-station.positio
 | name | `name: { field: station_id }` | `KX7` |
 
 What each adapter sends for it is in that adapter's page.
+
+## Canonical Track v2
+
+A Canonical Track v2 object (`apiVersion: billie.dev/track-v2`, `kind: Track`) is accepted wherever a record is: over HTTP, from a JSON-lines file and from the ZeroMQ socket. The gateway turns it into a record with subsystem `TRACK`, message type `Track` and dictionary `canonical-track-v2`, whose message fields are `track_id`, `source_id`, `generation`, `latitude`, `longitude`, `altitude` when present, `classification` (`unknown` when absent), `course` and `speed` from velocity east and north when present, and `confidence`, `simulated` and `test_data` when present. [mappings/canonical-track-v2.yml](../mappings/canonical-track-v2.yml) maps that record; include it in a configuration's `mappings` to accept tracks. A track missing `trackId`, `sourceId`, `trackGeneration`, `observedAt` or a position is refused, the log names the member, and nothing is sent. Example tracks: [examples/tracks/](../examples/tracks/).
