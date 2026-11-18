@@ -60,7 +60,7 @@ def test_a_track_keeps_its_values() -> None:
         ({"trackId": ""}, "trackId"),
         ({"observedAt": "yesterday"}, "observedAt"),
         ({"position": {"latitudeDeg": "64", "longitudeDeg": -147.0}}, "position.latitudeDeg"),
-        ({"trackGeneration": True}, "trackGeneration"),
+        ({"trackGeneration": 3}, "trackGeneration"),
     ],
 )
 def test_a_track_missing_a_required_member_is_refused_by_name(change: dict[str, Any], member: str) -> None:
