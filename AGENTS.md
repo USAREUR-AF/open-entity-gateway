@@ -4,7 +4,7 @@ Instructions for AI coding agents, and a short version for people working here. 
 
 ## What this repository is
 
-open-entity-gateway publishes the records [first-bite](https://github.com/USAREUR-AF/first-bite) decodes as tracks, over Cursor-on-Target, SAPIENT and ASTERIX category 062, and through optional vendor adapters. It holds no first-bite code and no vendor code.
+open-entity-gateway turns decoded records into tracks and publishes them over Cursor-on-Target, SAPIENT and ASTERIX category 062, and through optional vendor adapters. [first-bite](https://github.com/USAREUR-AF/first-bite) is the reference source of records; any program writing the same record shape can feed it. It holds no first-bite code and no vendor code.
 
 ## Rules
 

@@ -1,14 +1,34 @@
 # open-entity-gateway
 
-**Publishes the records [first-bite](https://github.com/USAREUR-AF/first-bite) decodes as tracks, over open interface standards: Cursor-on-Target, SAPIENT (BSI Flex 335 v2.0) and ASTERIX category 062. Optional adapters for vendor interfaces are separate packages.**
+**Turns decoded messages into tracks and publishes them over open interface standards: Cursor-on-Target, SAPIENT (BSI Flex 335 v2.0) and ASTERIX category 062. Optional adapters for vendor interfaces are separate packages.**
 
-first-bite reads a copy of binary messages off a link, decodes them against a dictionary and publishes one record per message. This gateway takes those records, turns the ones a mapping file names into tracks, and sends each track to the destinations its owner configures, in each destination's interface.
+The gateway reads *records*. A record is a JSON or CBOR object that holds one message's decoded fields under `message`, with `subsystem`, `message_type` and `timestamp` saying what the message is and when it was captured. A mapping file says which records become tracks and which fields fill them. [first-bite](https://github.com/USAREUR-AF/first-bite) writes records in this shape and is the reference source; any program that writes the same shape can feed the gateway. How the gateway is meant to serve the other goat repositories, as the one way tracks leave the fabric for systems outside it, is in [docs/design/track-egress.md](docs/design/track-egress.md) (designed, not built).
 
-```text
-first-bite ──rest POST (JSON or CBOR)──▶ ┌──────────────────────────┐ ──CoT XML, UDP/TCP/TLS──▶ TAK server or clients
-           ──JSON-lines file───────────▶ │ open-entity-gateway       │ ──SAPIENT protobuf, TCP──▶ SAPIENT fusion node or middleware
-           ──ZeroMQ socket─────────────▶ │  mappings/*.yml (data)    │ ──ASTERIX CAT062, UDP────▶ ASTERIX system-track consumer
-                                         └──────────────────────────┘ ──optional vendor adapter─▶ vendor system
+```mermaid
+flowchart LR
+  subgraph IN["Record sources"]
+    FB["first-bite (reference source)"]
+    ANY["any program writing the record shape"]
+  end
+  subgraph GW["open-entity-gateway"]
+    direction TB
+    RX["Inputs: HTTP POST, JSON-lines file, ZeroMQ"]
+    MAP["mappings/*.yml: which records become tracks"]
+    TX["Destinations: only those the configuration lists"]
+    RX --> MAP --> TX
+  end
+  subgraph OUT["Open standards"]
+    COT["Cursor-on-Target: TAK server or clients"]
+    SAP["SAPIENT: fusion node or middleware"]
+    AST["ASTERIX CAT062: system-track consumer"]
+  end
+  VEN["Optional vendor adapters"]
+  FB --> RX
+  ANY --> RX
+  TX --> COT
+  TX --> SAP
+  TX --> AST
+  TX -.-> VEN
 ```
 
 The gateway sends only to the destinations its configuration lists. A configuration that lists none stops the gateway at start-up. A record that cannot fill its mapping is refused, the log names the field, and no destination receives anything for it.
@@ -26,6 +46,9 @@ Status words: **built** (the code exists and its unit tests pass), **measured** 
 | ASTERIX category 062, system track data | EUROCONTROL | intergovernmental (Belgium) | specification, free download | EUROCONTROL publication, linked not copied | built; measured | asterix4py 1.0.6 decoder (MIT), round trip field by field | [CAT062 edition 1.21](https://www.eurocontrol.int/publication/cat062-eurocontrol-specification-surveillance-data-exchange-asterix-part-9-category-062), 2026-11-15 |
 | NATO ISR tracking standard, STANAG 4676 Ed. 2 (AEDP-12) | NATO | NATO | documents in the NATO Standardization Office public database; XML schemas through national representatives | NATO copyright | not built | none | [NSO public database](https://nso.nato.int/nso/nsdd/main/standards), 2026-11-15 |
 | OGC SensorThings API 1.1 and 2.0 | Open Geospatial Consortium | international | public specification | OGC Document License Agreement | not built | FROST-Server (LGPL-3.0) would be the target | [OGC SensorThings](https://www.ogc.org/standards/sensorthings/), 2026-11-15 |
+| OARIS 2.0, Open Architecture Radar Interface Standard: radar to combat management system, including track reporting | Object Management Group (contributors include Thales, BAE Systems and Atlas Elektronik) | international | formal specification (formal/23-09-01) and machine-readable files on omg.org | OMG specification terms (not yet read) | not built | none | [OMG OARIS](https://www.omg.org/spec/OARIS/2.0), 2026-11-18 |
+| C2SIM, SISO-STD-019-2020 / STANAG 4856 Ed. 1: command and control to simulation (orders, reports) | SISO; NATO | international; NATO | SISO standard; NATO STANAG approved 2023; an open-source reference server exists | not yet read | not built | the open-source C2SIM server would be the target | [C2SIM in a nutshell (TNO)](https://tno-mst.github.io/c2sim-server/c2sim-in-nutshell), [STO-EN-MSG-211](https://www.sto.nato.int/publications/STO%20Educational%20Notes/STO-EN-MSG-211/EN-MSG-211-2.3.pdf), 2026-11-18 |
+| NATO Generic Vehicle Architecture, STANAG 4754 Ed. 3 / AEP-4754 Vol. V Land Data Model (DDS) | NATO, from UK GVA | NATO | STANAG sold through standards retailers; whether the data model files can be obtained freely is not confirmed | NATO copyright | not built | none | [STANAG 4754 Ed. 3](https://shop.standards.ie/en-ie/standards/stanag-4754-ed-3-2024-1318066_saig_nato_nato_3492169), [AEP-4754 Vol. V](https://standards.globalspec.com/std/14590051/aep-4754-vol-v), 2026-11-18 |
 
 ### Vendor interfaces (optional adapters, alphabetical by vendor)
 
@@ -110,11 +133,11 @@ The unit tests need no server and no vendor SDK. `tests/e2e/run-on-build-host.sh
 |---|---|
 | `src/open_entity_gateway/` | the core (inputs, mapping, gateway, adapter interface) and the open-standard adapters |
 | `vendors/lattice/`, `vendors/picogrid-ecn/` | optional vendor adapters, each its own package |
-| `mappings/` | mapping files for first-bite's weather-station dictionary and hello-galaxy-first-bite's harbour-buoy dictionary |
+| `mappings/` | example mapping files, for first-bite's weather-station dictionary and hello-galaxy-first-bite's harbour-buoy dictionary |
 | `examples/` | example records and an example configuration |
 | `tools/` | pinned fetchers for the SAPIENT protos and the CoT schemas; the cotify test-vector generator |
 | `tests/` | unit tests; `tests/e2e/` against servers in containers; `tests/vectors/` events first-bite wrote |
-| `docs/` | mapping, adapters, vendors, handling rules, relationship to first-bite and goat |
+| `docs/` | mapping, adapters, vendors, handling rules, relationship to first-bite and goat, the track-egress design |
 
 ## Licence
 
