@@ -120,3 +120,11 @@ def test_optional_names_only_the_altitude_or_motion_fields() -> None:
     }
     with pytest.raises(MappingError, match="optional"):
         Mapping(document, "m")
+
+
+def test_print_writes_a_track(capsys: Any) -> None:
+    from open_entity_gateway.cli import main
+
+    assert main(["print", "--mapping", str(MAPPINGS), "--adapter", "cot", str(TRACKS)]) == 0
+    out = capsys.readouterr().out
+    assert 'uid="example-radar-1_T-0007"' in out and 'uid="example-radar-1_T-0008"' in out
