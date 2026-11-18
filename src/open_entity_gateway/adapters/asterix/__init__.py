@@ -22,7 +22,7 @@ from typing import Any
 
 from ...adapter import Adapter, ConfigError
 from ...mapping import Mapping, MappingError, Track, Value
-from ...record import NANOS, RecordError
+from ...record import NANOS, RecordError, field_text
 from ...transport import Datagrams
 
 CATEGORY = 62
@@ -89,7 +89,7 @@ def _byte(destination: dict[str, Any], key: str, label: str, required: bool) -> 
 
 
 class Block:
-    def __init__(self, track_number: Value | None, simulated: bool, altitude_source: int):
+    def __init__(self, track_number: Value | None, simulated: bool | str, altitude_source: int):
         self.track_number = track_number
         self.simulated = simulated
         self.altitude_source = altitude_source
@@ -120,13 +120,24 @@ class AsterixCat062(Adapter):
         if not isinstance(block, dict) or set(block) - _BLOCK_KEYS:
             raise MappingError(f"{where}: takes {sorted(_BLOCK_KEYS)}")
         simulated = block.get("simulated", False)
-        if not isinstance(simulated, bool):
-            raise MappingError(f"{where}.simulated: true or false")
+        if isinstance(simulated, dict) and set(simulated) == {"field"} and isinstance(simulated["field"], str):
+            simulated = simulated["field"]  # a message field holding true or false
+        elif not isinstance(simulated, bool):
+            raise MappingError(f"{where}.simulated: true, false, or {{ field: <a field holding true or false> }}")
         source = block.get("altitude_source", "none")
         if source not in ALTITUDE_SOURCES:
             raise MappingError(f"{where}.altitude_source: one of {sorted(ALTITUDE_SOURCES)}")
         number = Value(block["track_number"], f"{where}.track_number") if "track_number" in block else None
         return Block(number, simulated, ALTITUDE_SOURCES[source])
+
+    @staticmethod
+    def simulated(record: dict[str, Any], block: Block) -> bool:
+        if isinstance(block.simulated, bool):
+            return block.simulated
+        text = field_text(record, block.simulated)
+        if text not in ("true", "false"):
+            raise RecordError(f"message field {block.simulated!r} is not true or false: {text!r}")
+        return text == "true"
 
     def track_number(self, track: Track, record: dict[str, Any], block: Block) -> int:
         if block.track_number is not None:
@@ -177,7 +188,7 @@ class AsterixCat062(Adapter):
 
         # MON=1 (monosensor), MRH=1 (geometric altitude) when an altitude is sent.
         first = 0x80 | (0x20 if track.hae is not None else 0) | (block.altitude_source << 2)
-        if block.simulated:
+        if self.simulated(record, block):
             items["080"] = bytes((first | 0x01, 0x80))  # first extent: SIM
         else:
             items["080"] = bytes((first,))

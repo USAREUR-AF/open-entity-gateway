@@ -90,6 +90,15 @@ def test_asterix_from_a_track() -> None:
     item = asterix4py.AsterixParser(adapter.encode(track, record, m.parsed[adapter.name])).get_result()[1]
     assert item["cat"] == 62
     assert item["105"]["Lat"] == pytest.approx(64.8378, abs=LSB_DEGREES)
+    assert item["080"]["SIM"] == 1  # the example track is simulated test data
+
+
+def test_a_live_track_is_not_marked_simulated() -> None:
+    adapter = AsterixCat062({"name": "a", "adapter": "asterix-cat062", "print": True})
+    live = {**tracks()[0], "simulated": False, "testData": False}
+    track, m, record = mapped(adapter, live)
+    item = asterix4py.AsterixParser(adapter.encode(track, record, m.parsed[adapter.name])).get_result()[1]
+    assert item["080"].get("SIM", 0) == 0
 
 
 def test_sapient_from_a_track() -> None:

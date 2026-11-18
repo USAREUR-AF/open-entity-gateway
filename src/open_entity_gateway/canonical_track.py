@@ -80,6 +80,9 @@ def track_record(track: dict[str, Any]) -> dict[str, Any]:
     for member, key in (("confidence", "confidence"), ("simulated", "simulated"), ("testData", "test_data")):
         if track.get(member) is not None:
             body[key] = track[member]
+    # As the goat-transformers pack derives cat062.sim: simulated when any of
+    # the three flags that is present is true.
+    body["any_simulated"] = any(track.get(m) is True for m in ("simulated", "headerSimulated", "testData"))
 
     return {
         "subsystem": SUBSYSTEM,

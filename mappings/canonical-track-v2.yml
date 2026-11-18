@@ -30,3 +30,5 @@ optional: [altitude, course, speed]
 stale_minutes: 2
 time: capture        # the track's observedAt
 name: { field: track_id }
+asterix:
+  simulated: { field: any_simulated }   # SIM when simulated, headerSimulated or testData is true
