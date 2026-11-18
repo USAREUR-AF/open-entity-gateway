@@ -1,72 +1,30 @@
 # open-entity-gateway
 
-**Turns decoded messages into tracks and publishes them over open interface standards: Cursor-on-Target, SAPIENT (BSI Flex 335 v2.0) and ASTERIX category 062. Optional adapters for vendor interfaces are separate packages.**
+**Turns decoded messages into tracks and publishes them over open interface standards: Cursor-on-Target, SAPIENT and ASTERIX category 062. Optional adapters reach vendor systems.**
 
-The gateway reads *records*. A record is a JSON or CBOR object that holds one message's decoded fields under `message`, with `subsystem`, `message_type` and `timestamp` saying what the message is and when it was captured. A mapping file says which records become tracks and which fields fill them. [first-bite](https://github.com/USAREUR-AF/first-bite) writes records in this shape and is the reference source; any program that writes the same shape can feed the gateway. How the gateway is meant to serve the other goat repositories, as the one way tracks leave the fabric for systems outside it, is in [docs/design/track-egress.md](docs/design/track-egress.md) (designed, not built).
+<p align="center"><img src="docs/img/gateway-flow.svg" width="820" alt="Records or Canonical Track v2 objects arrive over HTTP, from a file or ZeroMQ; a mapping file picks which become tracks; each track goes only to the destinations the configuration lists. A record that cannot fill its mapping is refused and nothing is sent."></p>
 
-```mermaid
-flowchart LR
-  subgraph IN["Record sources"]
-    FB["first-bite (reference source)"]
-    ANY["any program writing the record shape"]
-  end
-  subgraph GW["open-entity-gateway"]
-    direction TB
-    RX["Inputs: HTTP POST, JSON-lines file, ZeroMQ"]
-    MAP["mappings/*.yml: which records become tracks"]
-    TX["Destinations: only those the configuration lists"]
-    RX --> MAP --> TX
-  end
-  subgraph OUT["Open standards"]
-    COT["Cursor-on-Target: TAK server or clients"]
-    SAP["SAPIENT: fusion node or middleware"]
-    AST["ASTERIX CAT062: system-track consumer"]
-  end
-  VEN["Optional vendor adapters"]
-  FB --> RX
-  ANY --> RX
-  TX --> COT
-  TX --> SAP
-  TX --> AST
-  TX -.-> VEN
-```
+- **Reads records.** A record is a JSON or CBOR object with one message's decoded fields under `message`, plus `subsystem`, `message_type` and `timestamp`. [first-bite](https://github.com/USAREUR-AF/first-bite) writes them; any program writing the same shape can feed the gateway.
+- **Maps them.** A small YAML file per message says which records become tracks and which fields fill them ([docs/mapping.md](docs/mapping.md)).
+- **Sends only where you say.** There is no default destination. A configuration that lists none stops the gateway at start-up.
 
-The gateway sends only to the destinations its configuration lists. A configuration that lists none stops the gateway at start-up. A record that cannot fill its mapping is refused, the log names the field, and no destination receives anything for it.
+Where this is heading, as the one way tracks leave the goat fabric for systems outside it: [docs/design/track-egress.md](docs/design/track-egress.md) (designed, not built).
 
-## Supported interfaces
+## Interfaces
 
-Status words: **built** (the code exists and its unit tests pass), **measured** (a command ran against the named test target and produced the stated result), **designed, not built** (decided, no code), **not built** (nothing exists).
+| Interface | Kind | Status | Tested against |
+|---|---|---|---|
+| Cursor-on-Target 2.0 (UDP, multicast, TCP, TLS) | open standard | built, measured | OpenTAKServer; MITRE schemas |
+| SAPIENT, BSI Flex 335 v2.0 | open standard | built, measured | Dstl Apex SAPIENT middleware 4.2.0 |
+| ASTERIX category 062 | open standard | built, measured | asterix4py decoder, field by field |
+| Anduril Lattice SDK | vendor adapter | built | the SDK with a local stub |
+| Picogrid ECN SDK | vendor adapter | built, measured | the SDK's offline mock |
 
-### Open standards
+**Not built yet.** Open standards: STANAG 4676, OGC SensorThings, OARIS 2.0, C2SIM, NGVA. Vendor interfaces: Aaronia AARTOS, Auterion SDK, BAE Systems INTeACT, Palantir platform SDKs, Picogrid Legion, Rheinmetall TacticalAPI, Skydio Cloud API.
 
-| Interface | Owner | Country | How it is published | Licence or terms | Status | Test target | Source, date read |
-|---|---|---|---|---|---|---|---|
-| Cursor-on-Target 2.0, XML over UDP (unicast, multicast) and TCP, TLS optional | MITRE (schemas); TAK Product Center (framing) | US | public-release XSDs and framing notes in a public repository | MITRE: "Approved for Public Release; Distribution Unlimited"; repository GPL-3.0; schemas fetched at test time, not copied | built; measured | OpenTAKServer (container), MITRE public-release XSDs | [atak-civ takcot/mitre, takproto](https://github.com/TAK-Product-Center/atak-civ), 2026-11-15 |
-| SAPIENT, BSI Flex 335 v2.0, edge node (registration, status, detection reports) | UK MOD / Dstl; BSI (document) | UK | proto files in a public repository; standard from BSI | protos Apache-2.0 (Crown copyright), fetched at a pinned commit; document BSI copyright, linked not copied | built; measured | Dstl Apex SAPIENT middleware 4.2.0 (container) | [dstl/SAPIENT-Proto-Files](https://github.com/dstl/SAPIENT-Proto-Files), [BSI Flex 335 v2.0](https://knowledge.bsigroup.com/products/bsi-flex-335-v2-0-2023-sapient-network-of-autonomous-sensors-and-effectors-interface-control-document-specification-specification), 2026-11-15 |
-| ASTERIX category 062, system track data | EUROCONTROL | intergovernmental (Belgium) | specification, free download | EUROCONTROL publication, linked not copied | built; measured | asterix4py 1.0.6 decoder (MIT), round trip field by field | [CAT062 edition 1.21](https://www.eurocontrol.int/publication/cat062-eurocontrol-specification-surveillance-data-exchange-asterix-part-9-category-062), 2026-11-15 |
-| NATO ISR tracking standard, STANAG 4676 Ed. 2 (AEDP-12) | NATO | NATO | documents in the NATO Standardization Office public database; XML schemas through national representatives | NATO copyright | not built | none | [NSO public database](https://nso.nato.int/nso/nsdd/main/standards), 2026-11-15 |
-| OGC SensorThings API 1.1 and 2.0 | Open Geospatial Consortium | international | public specification | OGC Document License Agreement | not built | FROST-Server (LGPL-3.0) would be the target | [OGC SensorThings](https://www.ogc.org/standards/sensorthings/), 2026-11-15 |
-| OARIS 2.0, Open Architecture Radar Interface Standard: radar to combat management system, including track reporting | Object Management Group (contributors include Thales, BAE Systems and Atlas Elektronik) | international | formal specification (formal/23-09-01) and machine-readable files on omg.org | OMG specification terms (not yet read) | not built | none | [OMG OARIS](https://www.omg.org/spec/OARIS/2.0), 2026-11-18 |
-| C2SIM, SISO-STD-019-2020 / STANAG 4856 Ed. 1: command and control to simulation (orders, reports) | SISO; NATO | international; NATO | SISO standard; NATO STANAG approved 2023; an open-source reference server exists | not yet read | not built | the open-source C2SIM server would be the target | [C2SIM in a nutshell (TNO)](https://tno-mst.github.io/c2sim-server/c2sim-in-nutshell), [STO-EN-MSG-211](https://www.sto.nato.int/publications/STO%20Educational%20Notes/STO-EN-MSG-211/EN-MSG-211-2.3.pdf), 2026-11-18 |
-| NATO Generic Vehicle Architecture, STANAG 4754 Ed. 3 / AEP-4754 Vol. V Land Data Model (DDS) | NATO, from UK GVA | NATO | STANAG sold through standards retailers; whether the data model files can be obtained freely is not confirmed | NATO copyright | not built | none | [STANAG 4754 Ed. 3](https://shop.standards.ie/en-ie/standards/stanag-4754-ed-3-2024-1318066_saig_nato_nato_3492169), [AEP-4754 Vol. V](https://standards.globalspec.com/std/14590051/aep-4754-vol-v), 2026-11-18 |
+Owners, licences, sources and dates for every row: [docs/interfaces.md](docs/interfaces.md). What each built adapter sends: [docs/adapters/](docs/adapters/). What an unbuilt vendor adapter would need, and companies with no published interface: [docs/vendors.md](docs/vendors.md). Controlled military data links are out of scope: Link 16, JREAP, VMF, ADatP-3, JC3IEDM.
 
-### Vendor interfaces (optional adapters, alphabetical by vendor)
-
-| Interface | Owner | Country | How it is published | Licence or terms | Status | Test target | Source, date read |
-|---|---|---|---|---|---|---|---|
-| AARTOS drone-tracking JSON format | Aaronia AG | Germany | PDF on the vendor's forum | none stated | not built | none | [format description](https://v6-forum.aaronia.de/wp-content/uploads/asgarosforum/30/Drone-Tracking-JSON-Format-10.pdf), 2026-11-15 |
-| Lattice SDK for Python, `entities.publish_entity` | Anduril Industries | US | public repository and PyPI package `anduril-lattice-sdk` | Anduril Lattice SDK License Agreement (not open source); installing or using the SDK accepts it; this project distributes no SDK file | built; not run against a Lattice environment | SDK with its HTTP transport replaced by a local stub | [lattice-sdk-python](https://github.com/anduril/lattice-sdk-python), 2026-11-15 |
-| Auterion SDK | Auterion | US, Switzerland | public documentation | not found | not built | none | [Auterion SDK](https://docs.auterion.com/app-development/auterion-sdk), 2026-11-15 |
-| INTeACT SDK | BAE Systems | UK | product page | not read (the page refused automated reading) | not built | none | [INTeACT SDK](https://www.baesystems.com/en-uk/product/inteact-software-development-kit), 2026-11-15 |
-| Foundry and Gotham platform SDKs; Ontology SDK (generated per customer ontology) | Palantir Technologies | US | public repositories; OSDK generated in each customer's Developer Console | platform SDKs and osdk-ts Apache-2.0 | designed, not built | none | [foundry-platform-python](https://github.com/palantir/foundry-platform-python), [osdk-ts](https://github.com/palantir/osdk-ts), [Defense OSDK](https://palantir.com/docs/defense-osdk/api/missionPlanning/overview/about/), 2026-11-15 |
-| Expeditionary C2 Node SDK (`picogrid-ecn-client`), MQTT v5 | Picogrid | US | public repository and PyPI package | MPL-2.0 | built; measured | the SDK's own offline mock (`MockECN`) | [ecn-sdk-python](https://github.com/picogrid/ecn-sdk-python), [docs](https://docs.picogrid.com/ecn-sdk/), 2026-11-15 |
-| Legion REST API v3, OAuth 2.0 | Picogrid | US | public documentation; OpenAPI 3.1 document downloadable without login | the OpenAPI document states no licence or terms; Picogrid's commercial terms govern customers | designed, not built | none | [Legion docs](https://docs.picogrid.com/legion/), [commercial terms](https://picogrid.com/legal/commercial-license-terms.pdf), 2026-11-15 |
-| TacticalAPI, gRPC (`Situation`, `BlueForceTracking`, `OwnPose`) | Rheinmetall | Germany | public repository with protos and a C# test client | EPL-2.0 | designed, not built | none | [Rheinmetall/tacticalapi](https://github.com/Rheinmetall/tacticalapi), 2026-11-15 |
-| Skydio Cloud API (REST, OpenAPI) | Skydio | US | public documentation | API terms: internal business use; distribution needs Skydio's written approval | not built | none | [Skydio API docs](https://apidocs.skydio.com/reference/introduction), [API terms](https://www.skydio.com/legal/api-terms-of-service), 2026-11-15 |
-
-The vendors named here are the integrations built or considered so far. Their presence is not an endorsement or a preference. The list is expected to grow, and integrations for other vendors are welcome.
-
-What each built adapter sends and how it was tested: [docs/adapters/](docs/adapters/). What a designed or not-built vendor adapter would need: [docs/vendors.md](docs/vendors.md). Controlled military data links and message standards are out of scope: Link 16, JREAP, VMF, ADatP-3, JC3IEDM.
+Status words: **built** means the code exists and its unit tests pass; **measured** means a command ran against the named test target. Vendors are listed alphabetically and their presence is not an endorsement or a preference; integrations for other vendors are welcome.
 
 ## Neutrality
 
@@ -137,7 +95,7 @@ The unit tests need no server and no vendor SDK. `tests/e2e/run-on-build-host.sh
 | `examples/` | example records and an example configuration |
 | `tools/` | pinned fetchers for the SAPIENT protos and the CoT schemas; the cotify test-vector generator |
 | `tests/` | unit tests; `tests/e2e/` against servers in containers; `tests/vectors/` events first-bite wrote |
-| `docs/` | mapping, adapters, vendors, handling rules, relationship to first-bite and goat, the track-egress design |
+| `docs/` | mapping, interfaces, adapters, vendors, handling rules, relationship to first-bite and goat, the track-egress design |
 
 ## Licence
 
