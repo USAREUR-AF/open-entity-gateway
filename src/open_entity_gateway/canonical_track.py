@@ -28,7 +28,7 @@ def is_canonical_track(value: Any) -> bool:
     return isinstance(value, dict) and value.get("apiVersion") == API_VERSION and value.get("kind") == KIND
 
 
-def _observed_ns(text: Any) -> int:
+def observed_ns(text: Any) -> int:
     match = _TIME.match(text) if isinstance(text, str) else None
     if match is None:
         raise RecordError(f"track member 'observedAt' is not an RFC 3339 time: {text!r}")
@@ -57,7 +57,7 @@ def track_record(track: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(position, dict):
         raise RecordError("track member 'position' is missing")
     generation = _text(track.get("trackGeneration"), "trackGeneration")
-    observed = _observed_ns(track.get("observedAt"))
+    observed = observed_ns(track.get("observedAt"))
 
     body: dict[str, Any] = {
         "track_id": _text(track.get("trackId"), "trackId"),
