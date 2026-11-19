@@ -72,7 +72,7 @@ def _print(args: argparse.Namespace) -> int:
             continue
         try:
             track = mapping.track(record)
-            payload = adapter.encode(track, record, mapping.parsed.get(adapter.name))
+            payload = adapter.encode(track, record, adapter.block_for(mapping))
         except RecordError as error:
             print(f"open-entity-gateway: refused {mapping.topic}: {error}", file=sys.stderr)
             refused += 1

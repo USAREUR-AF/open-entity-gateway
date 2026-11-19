@@ -60,6 +60,11 @@ class Adapter(abc.ABC):
             raise MappingError(f"{mapping.name}: {cls.block}: this adapter takes no block")
         return None
 
+    def block_for(self, mapping: Mapping) -> Any:
+        """What `parse_block` returned for this adapter in `mapping`: the
+        block `encode` is given."""
+        return mapping.parsed.get(self.name)
+
     def prepare(self, mappings: list[Mapping]) -> None:
         """Called once every mapping is loaded and its block parsed, before
         `start`: for an adapter that declares in advance what it will send."""
@@ -96,9 +101,10 @@ def require(destination: dict[str, Any], key: str, kind: type | tuple[type, ...]
 def builtin_adapters() -> dict[str, type[Adapter]]:
     from .adapters.asterix import AsterixCat062
     from .adapters.cot import CursorOnTarget
+    from .adapters.fabric import FabricPublisher
     from .adapters.sapient import SapientEdgeNode
 
-    return {cls.name: cls for cls in (CursorOnTarget, SapientEdgeNode, AsterixCat062)}
+    return {cls.name: cls for cls in (CursorOnTarget, SapientEdgeNode, AsterixCat062, FabricPublisher)}
 
 
 def available_adapters() -> dict[str, type[Adapter]]:
