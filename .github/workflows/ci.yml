@@ -57,7 +57,7 @@ jobs:
       - name: shell scripts
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck tests/e2e/run-on-build-host.sh
+          shellcheck tests/e2e/run-on-build-host.sh tests/e2e/octo-pod-egress/run.sh
 
   package:
     name: the packages build

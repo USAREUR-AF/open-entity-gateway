@@ -6,7 +6,8 @@ Publishes each track, encoded by one of the open-standard adapters, to one key o
 |---|---|
 | encoding through `cot`, `asterix-cat062` or `sapient`, and publishing to a key | built |
 | a payload published by the gateway received by a Zenoh subscriber on that key, equal to what the encoding adapter writes | measured (`tests/test_fabric.py`, two in-process Zenoh peers) |
-| delivered by an octo-pod egress destination | not run |
+| delivered by an octo-pod egress destination: CoT and CAT062 published by the gateway reach a UDP receiver through octo-pod's `downlink-bridge` and `egress-arm`, byte for byte and in order, over mutual TLS; a key the downlink allow list does not name delivers nothing | measured (`tests/e2e/octo-pod-egress/run.sh <octo-pod checkout>`, run by hand: one host, one in-process Zenoh router standing in for the fabric and the pen; octo-pod `fe48297`) |
+| delivered through a pod's `sapient://` destination | not run |
 
 ## Configuration
 
