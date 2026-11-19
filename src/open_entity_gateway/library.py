@@ -4,8 +4,8 @@ A gateway track is written as a Canonical Track v2 and converted by the
 copied goat-transformers Python engine to `cot-xml`, `asterix-cat062` or
 `sapient`. The values a track does not carry, or that the gateway decides, go
 in as conversion context, with the keys open-billie's goat-transformers option
-uses: the track identity as `track.scoped_id`, the CoT type, stale time and
-`how`; for CAT062 SAC, SIC and the track number; for SAPIENT the object id,
+uses: the track identity as `track.scoped_id`, the CoT type, stale time, `how`
+and callsign; for CAT062 SAC, SIC and the track number; for SAPIENT the object id,
 the report `id` and the class.
 """
 
@@ -91,16 +91,16 @@ def convert(track: Track, to: str, context: dict[str, str], simulated: bool = Fa
 
 
 def cot(track: Track) -> bytes:
-    return convert(
-        track,
-        "cot-xml",
-        {
-            "track.scoped_id": track.uid,
-            "type": track.cot_type,
-            "stale_ms": str(track.stale_ns // (NANOS // 1000)),
-            "how": "m-g",
-        },
-    )
+    context = {
+        "track.scoped_id": track.uid,
+        "type": track.cot_type,
+        "stale_ms": str(track.stale_ns // (NANOS // 1000)),
+        "how": "m-g",
+    }
+    if track.name is not None:
+        # The pack writes `callsign` as detail/contact/@callsign, as the native encoder writes the mapping's name.
+        context["callsign"] = track.name
+    return convert(track, "cot-xml", context)
 
 
 def cat062(track: Track, sac: int, sic: int, track_number: int, simulated: bool) -> bytes:
