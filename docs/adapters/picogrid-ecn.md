@@ -6,7 +6,8 @@ The optional `picogrid-ecn` adapter publishes each track as an entity, with its 
 |---|---|
 | entity and position from a track | built |
 | publishing through the SDK to the SDK's offline mock (`picogrid_ecn_client.testing.MockECN`); a second SDK client watching the integration receives and decodes both example tracks | measured (`vendors/picogrid-ecn/tests/test_picogrid_ecn.py`) |
-| publishing to an ECN | not run |
+| publishing to an ECN: run 2026-11-16 on a Picogrid ECN (mTLS to the broker on 8883, SDK 0.2.0); a second SDK client watching the integration received and decoded both example tracks with the fields above; the weather station (DEVICE, QoS 1) had a broker acknowledgement and the buoy (TRACK, QoS 0) a completed local send | measured (`vendors/picogrid-ecn/live/live_orionx.py publish`, a script run by hand: it starts a second SDK client that watches the integration and exits non-zero unless every send succeeded, every QoS 1 publish was acknowledged and the watcher decoded the buoy) |
+| the buoy track in OrionX (Intercept): with its time moved to now, republished every 5 s for 150 s, it appeared in OrionX's `/api/state` within seconds as a `FRIEND` track from `open-entity-gateway-test` at the buoy's position with its velocity, and was seen drawn on the map (blue friendly arrow, label `b55f62`) | measured (`vendors/picogrid-ecn/live/live_orionx.py verify`, a script run by hand over https, trusting the certificate in `ORIONX_CA` or, with `--insecure`, none, with `ORIONX_URL`, `ORIONX_USER`, `ORIONX_PASSWORD` in the environment) |
 
 ## Entity
 
