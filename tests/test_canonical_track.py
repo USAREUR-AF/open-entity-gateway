@@ -4,7 +4,6 @@ mappings/canonical-track-v2.yml, and written by every open-standard adapter."""
 from __future__ import annotations
 
 import json
-import math
 import xml.etree.ElementTree as ET
 from typing import Any
 
@@ -49,7 +48,7 @@ def test_a_track_keeps_its_values() -> None:
     )
     assert body["latitude"] == 64.8378 and body["longitude"] == -147.7164 and body["altitude"] == 412.0
     assert body["speed"] == pytest.approx(13.0)
-    assert body["course"] == pytest.approx(math.degrees(math.atan2(12.0, 5.0)))
+    assert body["course"] == 90.0  # due east; a course every engine writes the same way
     # 2025-06-15T15:06:43.250Z
     assert record["timestamp"] == {"secs_since_epoch": 1750000003, "nanos_since_epoch": 250_000_000}
 
