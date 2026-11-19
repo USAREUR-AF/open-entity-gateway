@@ -61,6 +61,7 @@ _KEYS = {
     "sac",
     "sic",
     "service_id",
+    "encoder",
     "print",
 }
 _BLOCK_KEYS = {"track_number", "simulated", "altitude_source"}
@@ -105,6 +106,9 @@ class AsterixCat062(Adapter):
         if unknown:
             raise ConfigError(f"destination {self.label!r}: unknown key {sorted(unknown)[0]!r}")
         self.printing = bool(destination.get("print"))
+        self.encoder = destination.get("encoder", "native")
+        if self.encoder not in ("native", "goat-transformers"):
+            raise ConfigError(f"destination {self.label!r}: encoder is native or goat-transformers")
         self.sac = _byte(destination, "sac", self.label, not self.printing) or 0
         self.sic = _byte(destination, "sic", self.label, not self.printing) or 0
         self.service_id = _byte(destination, "service_id", self.label, False)
@@ -160,6 +164,11 @@ class AsterixCat062(Adapter):
 
     def encode(self, track: Track, record: dict[str, Any], block: Block | None) -> bytes:
         block = block or Block(None, False, 0)
+        if self.encoder == "goat-transformers":
+            from ...library import cat062
+
+            number = self.track_number(track, record, block)
+            return cat062(track, self.sac, self.sic, number, self.simulated(record, block))
         items: dict[str, bytes] = {"010": bytes((self.sac, self.sic))}
         if self.service_id is not None:
             items["015"] = bytes((self.service_id,))

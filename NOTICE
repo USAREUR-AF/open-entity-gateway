@@ -11,6 +11,14 @@ released under the same License. See INTENT.md.
 This product is licensed under the Apache License, Version 2.0 (see LICENSE at
 the root of this repository).
 
+Material copied into this repository
+
+- The goat-transformers Python engine and four of its model modules and
+  packs, from https://github.com/USAREUR-AF/goat-transformers at the commit in
+  src/open_entity_gateway/_goat_transformers/COMMIT, Apache License 2.0
+  (U.S. Federal Government). tools/sync-goat-transformers.py copies them and
+  SHA256SUMS lists them.
+
 Material fetched at build or test time, not kept in this repository
 
 - SAPIENT (BSI Flex 335 v2.0) proto files, from

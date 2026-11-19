@@ -52,7 +52,7 @@ markers = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["src/open_entity_gateway/adapters/sapient/_generated"]
+extend-exclude = ["src/open_entity_gateway/adapters/sapient/_generated", "src/open_entity_gateway/_goat_transformers"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "N", "A", "S", "RUF"]
@@ -67,8 +67,13 @@ ignore = ["S101", "RUF001", "RUF002", "RUF003", "B027"]
 python_version = "3.11"
 strict = true
 warn_unused_ignores = false
-exclude = ["_generated/"]
+exclude = ["_generated/", "_goat_transformers/"]
 
 [[tool.mypy.overrides]]
 module = ["cbor2", "zmq", "zenoh", "anduril", "anduril.*", "asterix4py", "xmlschema", "open_entity_gateway.adapters.sapient._generated.*", "google.protobuf.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["open_entity_gateway._goat_transformers.*"]
+follow_imports = "skip"
+ignore_errors = true
