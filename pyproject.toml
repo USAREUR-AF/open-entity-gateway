@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "open-entity-gateway"
 version = "0.1.0"
-description = "Publishes records decoded by first-bite as tracks over open interface standards: Cursor-on-Target, SAPIENT (BSI Flex 335 v2), ASTERIX category 062."
+description = "Bridges between the goat fabric and vendor systems, one package per vendor."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
