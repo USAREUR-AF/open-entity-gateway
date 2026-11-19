@@ -1,6 +1,6 @@
 # Track egress: one way out of the fabric
 
-**Status: designed, not built.** Nothing in this document runs yet. Each step below is its own pull request in the repository named, and its tracking issue is linked at the end.
+**Status: designed; steps 1 and 2 built.** The gateway accepts Canonical Track v2 (step 1) and reads the fabric on named key expressions (step 2); the other steps are not built. Each step below is its own pull request in the repository named, and its tracking issue is linked at the end.
 
 Five goat repositories turn data into tracks or move tracks between systems, and three of them encode Cursor-on-Target, SAPIENT and ASTERIX each in their own code. This design makes the goat fabric (Zenoh) the one place tracks meet, and this gateway the one way they leave the fabric for systems that are not on it. Each format is encoded in one place, goat-transformers, and checked by its conformance vectors.
 

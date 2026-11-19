@@ -61,6 +61,12 @@ open-entity-gateway replay --config gateway.yml examples/records/weather-station
 
 `serve` answers each POST: `204` the record was queued for every destination or no mapping matches it; `422` a mapping matches and the record cannot fill it; `400`, `404`, `411`, `413`, `415` for a request that is not a record posted to the path. It speaks plain HTTP and binds loopback by default. The `zmq` command reads first-bite's ZeroMQ publisher socket instead (`pip install pyzmq`).
 
+The `zenoh` command reads the goat fabric: it subscribes only to the key expressions given with `--key` (at least one; a key made only of wildcards is refused), and takes endpoints, TLS and credentials from a Zenoh configuration file (`--zenoh-config`). Each sample is one record or one Canonical Track v2, as JSON or CBOR (`pip install 'open-entity-gateway[zenoh]'`, Zenoh 1.9.0).
+
+```bash
+open-entity-gateway zenoh --config gateway.yml --zenoh-config fabric.json5 --key 'sensors/*/tracks'
+```
+
 ## Mapping files
 
 One YAML file per message. The keys `uid`, `type`, `position`, `stale_minutes` and `form` are first-bite's `cot:` mapping keys and mean the same, so the block a first-bite subscriber carries under `cot:` is a mapping file's core unchanged. [docs/mapping.md](docs/mapping.md) gives every key, the value forms, and where the gateway differs from first-bite.
