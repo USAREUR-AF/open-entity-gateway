@@ -303,7 +303,9 @@ class SapientEdgeNode(Adapter):
             info.value = value
         if block is not None and block.classification is not None:
             detection.classification.add().type = block.classification.resolve(record)
-        if track.course is not None and track.speed is not None:
+        if track.velocity is not None:
+            detection.enu_velocity.east_rate, detection.enu_velocity.north_rate = track.velocity
+        elif track.course is not None and track.speed is not None:
             import math
 
             course = math.radians(track.course)

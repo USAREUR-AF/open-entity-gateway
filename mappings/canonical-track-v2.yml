@@ -26,7 +26,9 @@ position:
 motion:
   course: course     # from velocity east and north, degrees from true north
   speed: speed       # metres per second
-optional: [altitude, course, speed]
+  east: velocity_east     # the track's own components, metres per second
+  north: velocity_north
+optional: [altitude, course, speed, velocity_east, velocity_north]
 stale_minutes: 2
 time: capture        # the track's observedAt
 name: { field: track_id }

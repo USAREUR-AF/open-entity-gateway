@@ -113,6 +113,20 @@ def test_sapient_from_a_track() -> None:
     assert adapter.encode(track, record, m.parsed[adapter.name]) is not None
 
 
+def test_sapient_writes_the_tracks_own_velocity_components() -> None:
+    pytest.importorskip("google.protobuf")
+    pytest.importorskip("open_entity_gateway.adapters.sapient._generated.sapient_msg.proto_options_pb2")
+    from open_entity_gateway.adapters.sapient import SapientEdgeNode
+
+    node = "3f2b8c1e-5d4a-4e6f-9a7b-1c2d3e4f5a6b"
+    adapter = SapientEdgeNode({"name": "s", "adapter": "sapient", "node_id": node, "address": "127.0.0.1:9"})
+    track, m, record = mapped(adapter, {**tracks()[0], "velocity": {"eastMps": 13.0, "northMps": 0.0, "upMps": 0.0}})
+    assert track.velocity == (13.0, 0.0)
+    detection = adapter.encode(track, record, m.parsed[adapter.name])
+    report = getattr(detection, "detection_report", detection)
+    assert (report.enu_velocity.east_rate, report.enu_velocity.north_rate) == (13.0, 0.0)
+
+
 def test_the_gateway_takes_a_track_where_it_takes_a_record() -> None:
     adapter = CursorOnTarget({"name": "p", "adapter": "cot", "print": True})
     gateway = Gateway(prepare_mappings([MAPPINGS], [adapter]), [Destination(adapter, None, 10)])
