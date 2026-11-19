@@ -14,6 +14,10 @@ Encode computes a presence bit before it writes it: the bit is 1 when some
 `if` block naming it without `!` has content (a present key, a key with a
 default, a non-empty list), wherever in the presence's block that `if` stands,
 group items included. A length is written after its block.
+
+Under `armor sixbit` (0.14) the input and output are armored text: the
+message is any number of bits, and the output is the bits up to the cursor
+after the last line, not rounded to a byte, zero-filled to a multiple of 6.
 """
 
 from .entity import Entity, Item, _via_decode, _via_encode
@@ -21,7 +25,7 @@ from .errors import MalformedWire, NoKind, TransformDecodeFailure, TransformEnco
 from .seqdef import (
     T_ALIGN, T_CHAIN, T_CONST, T_FIELD, T_GROUP, T_IF, T_LENGTH, T_OPT, T_PAD, T_PRESENCE, T_WHEN, T_WHOLE,
 )
-from .wire_bits import Message, _hex_to_bytes, _swap_int
+from .wire_bits import Message, _hex_to_bytes, _swap_int, armored_message, armored_text, raw_int, sixbit_values
 
 _NONE = frozenset()
 
@@ -41,11 +45,23 @@ class _Scope:
         self.failed = None  # [(key, locator, reason, final)]
 
 
+def _held(items):
+    """The items a list holds, with the items of the lists inside them (ruling 7a of 0.11)."""
+    n = len(items)
+    for it in items:
+        for inner in it.lists.values():
+            n += _held(inner)
+    return n
+
+
 class _Reader:
-    def __init__(self, pack, data):
-        buf = _hex_to_bytes(data, pack.name)
+    def __init__(self, pack, data, limit=None):
+        self.left = limit  # the items the entity may still hold, None for no limit (ruling 7 of 0.11)
         self.pack = pack
-        self.msg = Message(pack, buf)
+        if pack.armor == "sixbit":
+            self.msg = armored_message(pack, data)
+        else:
+            self.msg = Message(pack, _hex_to_bytes(data, pack.name))
         self.pos = 0
         self.hard = self.msg.nbits
         self.soft = []      # the ends of the open `length` blocks, outermost first
@@ -134,14 +150,15 @@ class _Reader:
             raw = bytes(msg.uint(start + 8 * k, 8) for k in range(length // 8))
             if first.swap:
                 raw = raw[::-1]
+        elif getattr(first.transform, "as_sixbit", False):
+            raw = sixbit_values(msg, start, length)
         else:
             raw = msg.uint(start, length)
             if first.swap:
                 raw = _swap_int(raw, length)
         fields = sc.fields
         if first.absent is not None:  # a sentinel (0.9): compared with the bits as an integer, after `swap`
-            n = int.from_bytes(raw, "big" if msg.msb else "little") if as_bytes else raw
-            if n in first.absent:
+            if raw_int(raw, msg.msb) in first.absent:  # `sixbit` too (ruling 12 of 0.14)
                 return
         for f in nd.bindings:  # the line's key and each `also` key: one transform, the table of each
             key = f.key
@@ -254,6 +271,19 @@ class _Reader:
             if soft[i] > total:
                 soft[i] = total
 
+    def over(self, nd, n):
+        return MalformedWire(
+            "list %s has %d item(s); the limit on list items allows %d more" % (nd.list, n, max(self.left, 0)),
+            format=self.pack.name,
+        )
+
+    def replaces(self, nd, sc):
+        """The group is on the wire: the items of an earlier group of its list,
+        which it replaces (ruling 33 of 0.8), are no longer held (ruling 7g of 0.11)."""
+        old = sc.lists.get(nd.list)
+        if old and self.left is not None:
+            self.left += _held(old)
+
     def group(self, nd, sc):
         mode = nd.mode
         msg = self.msg
@@ -263,6 +293,9 @@ class _Reader:
             if start is None:
                 return
             n = msg.uint(start, nd.length)
+            self.replaces(nd, sc)
+            if self.left is not None and n > self.left:  # before any item is read (ruling 7d of 0.11)
+                raise self.over(nd, n)
             if n > self.limit() - self.pos:  # ruling 14 of 0.8
                 raise self.short("the %d item(s) of group %s" % (n, nd.list))
             for i in range(n):
@@ -274,6 +307,8 @@ class _Reader:
                     if not items:
                         return
                     break
+                if not items:
+                    self.replaces(nd, sc)
                 if not msg.uint(start, 1):
                     break
                 items.append(self.item(nd, sc, len(items)))
@@ -282,6 +317,8 @@ class _Reader:
                 start = self.take(1, "the bit before an item of group %s" % nd.list)
                 if start is None and not items:
                     return  # the group starts at the end of the extent: an absent list (ruling 7)
+                if not items:
+                    self.replaces(nd, sc)
                 # ruling 21 of 0.8: an indicator at the end of the extent reads
                 # as 0, so the item it stands before is the last one
                 items.append(self.item(nd, sc, len(items)))
@@ -290,6 +327,7 @@ class _Reader:
         else:  # fx
             if self.soft and self.pos >= self.soft[-1]:
                 return
+            self.replaces(nd, sc)
             while True:
                 items.append(self.item(nd, sc, len(items)))
                 start = self.take(1, "the bit after an item of group %s" % nd.list)
@@ -298,6 +336,10 @@ class _Reader:
         sc.lists[nd.list] = items
 
     def item(self, nd, sc, i):
+        if self.left is not None:
+            if self.left < 1:
+                raise self.over(nd, i + 1)
+            self.left -= 1
         item = Item()
         isc = _Scope(item.fields, item.lists, "%s%s[%d]." % (sc.prefix, nd.list, i))
         kind = self.body(nd.scope, isc)
@@ -328,9 +370,10 @@ class _Reader:
         return selected
 
 
-def decode(pack, data):
-    """-> Entity. Input beyond the last line is ignored (ruling 9 of 0.8)."""
-    rd = _Reader(pack, data)
+def decode(pack, data, limit=None):
+    """-> Entity. Input beyond the last line is ignored (ruling 9 of 0.8).
+    `limit` is the limit on list items (ruling 7 of 0.11)."""
+    rd = _Reader(pack, data, limit)
     ent = Entity()
     kind = rd.body(pack.seq, _Scope(ent.fields, ent.lists, ""))
     if kind is not None:
@@ -572,6 +615,12 @@ class _Writer:
                 if b:
                     self.ops.append((start + 8 * k, 8, b))
             self.pos = start + length
+        elif isinstance(v, tuple):  # the six-bit values of a `sixbit` field
+            start = self.pos
+            for k, c in enumerate(v):
+                if c:
+                    self.ops.append((start + 6 * k, 6, c))
+            self.pos = start + length
         else:
             v = int(v) & ((1 << length) - 1)
             self.put(length, _swap_int(v, length) if f.swap else v)
@@ -601,7 +650,15 @@ class _Writer:
             self.pos += 1  # the 0 bit that ends the list
 
     def finish(self):
-        """A message is a whole number of bytes: the rest of the last byte is zero."""
+        """A message is a whole number of bytes: the rest of the last byte is
+        zero. Under `armor sixbit` it is the bits up to the cursor, as armored
+        text (0.14); no `length ... whole` line is allowed there."""
+        if self.pack.armor == "sixbit":
+            nbits = self.pos
+            acc = 0
+            for start, length, v in self.ops:
+                acc |= (v & ((1 << length) - 1)) << (nbits - start - length)
+            return armored_text(acc, nbits)
         nbytes = -(-self.pos // 8)
         for at, nd in self.wholes:
             stated = nbytes + nd.plus
@@ -617,7 +674,7 @@ class _Writer:
 
 
 def encode(pack, entity):
-    """-> lowercase hex."""
+    """-> lowercase hex, or armored text under `armor sixbit`."""
     body = pack.seq
     kind = select_kind(pack, body, entity.kind, entity.fields, entity.lists)
     wr = _Writer(pack)

@@ -8,6 +8,14 @@ compiled in.
 from .engine import Engine, Entity, Item
 from .errors import (
     BadDirective,
+    BadLocator,
+    DuplicateFormat,
+    MissingFormat,
+    MissingModule,
+    MissingVersion,
+    MissingWire,
+    UnknownWire,
+    UnterminatedQuote,
     DuplicateField,
     DuplicateKind,
     NoKind,
@@ -46,4 +54,6 @@ __all__ = [
     "DistributionViolation", "ModuleNotUsed", "UndeclaredKey", "KeyTypeMismatch",
     "DuplicateModule", "DuplicateKey",
     "NoKind", "DuplicateKind", "DuplicateField", "BadDirective",
+    "BadLocator", "DuplicateFormat", "MissingFormat", "MissingModule", "MissingVersion", "MissingWire",
+    "UnknownWire", "UnterminatedQuote",
 ]

@@ -124,8 +124,6 @@ def cat062(
         # SRC, the block's altitude_source, as the native encoder writes it.
         "cat062.src": str(altitude_source),
     }
-    if track.hae is not None:
-        context["cat062.mrh"] = "1"  # I062/130 is written: geometric altitude more reliable
     if service_id is not None:
         context["cat062.service_id"] = str(service_id)  # I062/015
     return convert(track, "asterix-cat062", context, simulated)

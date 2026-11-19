@@ -87,8 +87,12 @@ def residue(pack, doc, mapped):
             if isinstance(value, dict):
                 walk(value, path + ".")
                 continue
+            if path in mapped:
+                continue
+            # A residue number whose nearest double is infinite has no
+            # canonical text: `malformed-wire` (ruling 2d of 0.11).
             text = scalar_text(value, pack.name)
-            if text is not None and path not in mapped:
+            if text is not None:
                 out[path] = text
 
     walk(doc, "")

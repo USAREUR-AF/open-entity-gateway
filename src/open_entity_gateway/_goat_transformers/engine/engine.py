@@ -2,9 +2,10 @@
 
 import os
 
-from . import wire_bits, wire_geojson, wire_json, wire_protobuf, wire_seq, wire_text, wire_xml
+from . import wire_bits, wire_geojson, wire_json, wire_protobuf, wire_seq, wire_text, wire_tlv, wire_xml
 from .errors import (
-    BadDirective, DistributionRefused, DistributionViolation, DuplicateModule, InvalidPack, KeyTypeMismatch, MalformedWire,
+    BadDirective, DistributionRefused, DistributionViolation, DuplicateFormat, DuplicateModule, KeyTypeMismatch,
+    MalformedWire,
     ModuleNotUsed, NoKind, TransformDecodeFailure, TransformEncodeFailure, UndeclaredKey, UnknownFormat,
     UnknownModule,
 )
@@ -14,10 +15,11 @@ from .entity import Entity, Item, _build_via, _via_decode, _via_encode
 from .transforms import read_typed, table_side_type
 
 DERIVE_PASSES = 8  # spec 0.6: the pass repeats until it sets nothing, at most 8 times
+MAX_ITEMS = 100000  # ruling 7b of 0.11: the default limit on the list items of one decode
 
 _CODECS = {
     "xml": wire_xml, "geojson": wire_geojson, "json": wire_json, "bits": wire_bits, "protobuf": wire_protobuf,
-    "text": wire_text,
+    "text": wire_text, "tlv": wire_tlv,
 }
 _Num = wire_geojson.Num
 
@@ -84,11 +86,12 @@ class _Enc:
 
 
 class Engine:
-    def __init__(self, packs=(), models=(), max_distribution="controlled"):
+    def __init__(self, packs=(), models=(), max_distribution="controlled", max_items=MAX_ITEMS):
         self.packs = {}
         self.models = {}
         self._derives = None
         self.set_max_distribution(max_distribution)
+        self.set_max_items(max_items)
         for m in models:
             self.add_model(m)
         for p in packs:
@@ -100,6 +103,15 @@ class Engine:
         if limit not in DISTRIBUTIONS:
             raise ValueError("max distribution must be one of %s, got %r" % (", ".join(DISTRIBUTIONS), limit))
         self.max_distribution = limit
+
+    def set_max_items(self, limit):
+        """The limit on list items one decode holds, counted over every list
+        at every nesting level (ruling 7 of 0.11): an integer of 0 or more,
+        100,000 by default. The decode that would hold one item more fails
+        with `malformed-wire`; `encode` is not limited."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError("max items is an integer of 0 or more, got %r" % (limit,))
+        self.max_items = limit
 
     def _within_limit(self, distribution):
         return DISTRIBUTIONS.index(distribution) <= DISTRIBUTIONS.index(self.max_distribution)
@@ -241,9 +253,11 @@ class Engine:
                 kind.requires_lists = tuple(key for key, (m, k) in names if k in self.models[m].lists)
                 kind.requires_keys = tuple(key for key, (m, k) in names if k not in self.models[m].lists)
         pack._plans.clear()
-        if pack.name in self.packs:
-            raise InvalidPack(
-                "format defined twice (%s, %s)" % (self.packs[pack.name].path, pack.path), format=pack.name
+        if pack.name in self.packs:  # ruling 5 of 0.11: the last check; the first pack stays loaded
+            raise DuplicateFormat(
+                "a pack with format name %r is already loaded (%s, %s)" % (pack.name, self.packs[pack.name].path,
+                                                                          pack.path),
+                format=pack.name,
             )
         self.packs[pack.name] = pack
 
@@ -344,14 +358,19 @@ class Engine:
 
     @staticmethod
     def _decode_value(wire, transform, raw):
-        """Run one field's transform over its raw wire value. Raises ValueError."""
-        if wire in ("bits", "protobuf", "text"):
+        """Run one field's transform over its raw wire value. Raises ValueError.
+        Ruling 2c and 2d of 0.11: on `xml`, and on `geojson` when the member is
+        a JSON string, `int` and `float` read integer and number text; a JSON
+        number is read by the JSON grammar."""
+        if wire in ("bits", "protobuf", "text", "tlv"):
             return transform.decode(raw)
         if wire == "xml":
             return transform.decode(raw)
         if wire == "geojson":
             if not isinstance(raw, str):
                 raise ValueError("not a JSON scalar string or number")
+            if isinstance(raw, _Num) and hasattr(transform, "decode_json"):
+                return transform.decode_json(str(raw))
             return transform.decode(str(raw))
         # json: the JSON type must be the one the transform takes.
         if transform.kind == "bool":
@@ -359,13 +378,16 @@ class Engine:
         if transform.kind == "number":
             if not isinstance(raw, _Num):
                 raise ValueError("%s needs a JSON number" % transform.name)
-            return transform.decode(str(raw))
+            return transform.decode_json(str(raw))
         if not isinstance(raw, str) or isinstance(raw, _Num):
             raise ValueError("%s needs a JSON string" % transform.name)
         return transform.decode(raw)
 
-    def decode(self, fmt, data):
+    def decode(self, fmt, data, max_items=None):
+        """Message to Entity. `max_items` sets the limit on list items for this
+        call (ruling 7 of 0.11); by default the engine's (`set_max_items`)."""
         pack = self.pack(fmt)
+        limit = self.max_items if max_items is None else max_items
         if isinstance(data, (bytes, bytearray)):
             try:
                 data = bytes(data).decode("utf-8")
@@ -377,7 +399,7 @@ class Engine:
             except UnicodeEncodeError:  # a str holding a lone surrogate
                 raise MalformedWire("input is not UTF-8 text: it holds a lone surrogate", format=fmt)
         if pack.seq is not None:
-            return wire_seq.decode(pack, data)
+            return wire_seq.decode(pack, data, limit)
         wire = pack.wire
         codec = _CODECS[wire]
         if wire == "geojson":
@@ -398,15 +420,20 @@ class Engine:
         plan = pack.plan(kind)
         if wire == "bits":
             codec.check_length(pack, msg, plan)
+        elif wire == "tlv":
+            codec.walk(pack, msg, plan)  # the nested sets of the selected scope, after the kind (0.13)
 
         failures = []  # (key, locator, reason) of every field that could not be decoded
-        keep_in_residue = self._decode_scope(pack, wire, codec, plan, msg, ent.fields, ent.lists, failures, "")
+        budget = [limit]  # the items this decode may still hold (ruling 7 of 0.11)
+        keep_in_residue = self._decode_scope(
+            pack, wire, codec, plan, msg, ent.fields, ent.lists, failures, "", budget
+        )
 
         mapped = plan.mapped - keep_in_residue if keep_in_residue else plan.mapped
         res = None
         if wire == "xml" or wire == "json":
             res = codec.residue(pack, msg, mapped)
-        elif wire == "text":
+        elif wire == "text" or wire == "tlv":
             res = codec.residue(pack, msg, plan)
         elif wire == "geojson":
             res = {}
@@ -434,7 +461,7 @@ class Engine:
             )
         return ent
 
-    def _decode_scope(self, pack, wire, codec, plan, ctx, fields, lists, failures, prefix):
+    def _decode_scope(self, pack, wire, codec, plan, ctx, fields, lists, failures, prefix, budget):
         """Decode one scope (the message, or one item of a group) from its wire
         context into `fields` and `lists`; the fields that could not be decoded
         are added to `failures`. -> the locators of `type` fields whose native
@@ -489,21 +516,38 @@ class Engine:
                 (prefix + k, loc, why) for k, loc, why, final in failed if final or k not in settled
             )
         # For each group of the scope, in line order: one item per occurrence.
+        # The number of items is compared with what the limit still allows
+        # before any item is read (ruling 7 of 0.11); on `bits` the count read
+        # from the wire is compared before the items are laid out.
+        count = getattr(codec, "count", None)
         for g in plan.groups:
+            if count is not None:
+                n = count(pack, ctx, g)
+                if n > budget[0]:
+                    raise self._over_limit(pack, g, n, budget)
             contexts = codec.items(pack, ctx, g)
             if contexts is None:
                 continue  # the list is absent
+            if len(contexts) > budget[0]:
+                raise self._over_limit(pack, g, len(contexts), budget)
+            budget[0] -= len(contexts)
             item_plan = g.plan
             out = []
             for n, item_ctx in enumerate(contexts):
                 item = Item()
                 self._decode_scope(
                     pack, wire, codec, item_plan, item_ctx, item.fields, item.lists, failures,
-                    "%s%s[%d]." % (prefix, g.list, n),
+                    "%s%s[%d]." % (prefix, g.list, n), budget,
                 )
                 out.append(item)
             lists[g.list] = out
         return keep_in_residue
+
+    def _over_limit(self, pack, group, n, budget):
+        return MalformedWire(
+            "list %s has %d item(s); the limit on list items allows %d more" % (group.list, n, budget[0]),
+            format=pack.name, locator=group.locator,
+        )
 
     # --- complete ------------------------------------------------------------
 
@@ -630,7 +674,7 @@ class Engine:
         residue = entity.residue.get(pack.name, {})
         if wire == "json":
             return codec.encode(pack, enc, residue).encode("utf-8")
-        if wire == "text":
+        if wire == "text" or wire == "tlv":
             return codec.write(pack, enc, residue).encode("utf-8")
         if wire == "xml":
             return codec.write(pack, enc, residue.items(), plan.root).encode("utf-8")
@@ -647,7 +691,10 @@ class Engine:
         defaults = plan.defaults
         c2n = pack.cot_to_native
         values = enc.values
+        skip = wire_tlv.overridden(plan) if pack.wire == "tlv" else ()
         for i, f in plan.ifields:
+            if i in skip:
+                continue  # its item holds a `when` or `const` value (ruling 9 of 0.13)
             key = f.key
             if key in have:
                 value = have[key]
@@ -674,13 +721,14 @@ class Engine:
             enc.groups[i] = [self._encode_scope(pack, item_plan, it.fields, it.lists) for it in items]
         return enc
 
-    def convert(self, from_fmt, to_fmt, data, context=None):
+    def convert(self, from_fmt, to_fmt, data, context=None, max_items=None):
         """spec 0.6, "Order inside `convert`": decode, and clear the kind unless
         `from == to`; fill absent keys from `context`; apply the derivations;
         encode. When `from == to` and no context is given the middle steps are
         skipped, so a same-format round trip stays byte-exact."""
-        self.pack(to_fmt)  # fail before decoding when the target is unknown
-        entity = self.decode(from_fmt, data)
+        self.pack(from_fmt)  # ruling 5 of 0.11: `from`, then `to`, before the input is read
+        self.pack(to_fmt)
+        entity = self.decode(from_fmt, data, max_items)
         if from_fmt != to_fmt:
             entity.kind = None  # a cross-format conversion chooses the target kind by `requires`
         if from_fmt != to_fmt or context is not None:

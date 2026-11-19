@@ -78,7 +78,8 @@ class Item:
 @dataclass
 class Entity:
     """Shared model: named fields plus residue. `residue` maps a format name to an
-    ordered {locator: original string value}; it never crosses formats. `kind`
+    ordered {locator: original string value} (on `tlv`, a list of (path, value
+    as hex) pairs, since every occurrence of a tag is kept); it never crosses formats. `kind`
     is the pair `(format, kind name)` a decode selected, or None. `lists` maps
     a list name to its items, in order (0.7); a list that is present and empty
     is distinct from an absent one."""

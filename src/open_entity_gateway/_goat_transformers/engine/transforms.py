@@ -13,28 +13,32 @@ caller has to pass the length. Bits transforms are valid only on a `bits` wire,
 text transforms only on a text wire (spec/engine-spec.md).
 
 Version 0.5 adds `bool` (the `json` wire only) and the bits transforms `uscale`,
-`sscale`, `f32`, `f64` and `ascii`. A transform reports a failure as ValueError;
+`sscale`, `f32`, `f64` and `ascii`; Version 0.14 adds `sixbit`. A transform reports a failure as ValueError;
 the engine names it `transform-decode` or `transform-encode`.
 """
 
 import math
 import re
 import struct
-import sys
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-_DECIMAL = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\Z")
-_INTEGER = re.compile(r"[+-]?\d+\Z")
+# The grammars of ruling 2 of 0.11, ASCII digits only. 2a: integer text.
+_INT_TEXT = re.compile(r"-?[0-9]+\Z")
+# 2b: number text.
+_NUM_TEXT = re.compile(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
+# 2c: an unsigned decimal integer.
+_UINT_TEXT = re.compile(r"[0-9]+\Z")
+_I64_MIN, _I64_MAX = -(1 << 63), (1 << 63) - 1
+# Ruling 3 of 0.11: the grammar of `iso8601_ms`.
 _ISO = re.compile(
-    r"(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:[Zz]|([+-])(\d{2}):(\d{2}))\Z"
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?"
+    r"(?:[Zz]|([+-])([0-9]{2}):([0-9]{2}))\Z"
 )
+_ISO_MIN = -62135596800000  # 0001-01-01T00:00:00.000Z
+_ISO_MAX = 253402300799999  # 9999-12-31T23:59:59.999Z
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _MS = timedelta(milliseconds=1)
-# The most digits an integer read from text may have: Python's limit on
-# converting a digit string to `int` (4300 by default), so `1e5000` and a
-# 5001-digit string fail alike.
-_INT_MAX_DIGITS = getattr(sys, "get_int_max_str_digits", lambda: 4300)() or 4300
 
 
 def format_float(value):
@@ -58,16 +62,93 @@ def format_int(value):
     return str(int(value))
 
 
+def read_int_text(text):
+    """Integer text (ruling 2a of 0.11): an optional `-`, then ASCII digits,
+    within a signed 64-bit integer. Raises ValueError."""
+    if not _INT_TEXT.match(text):
+        raise ValueError("not integer text: %r" % text[:40])
+    if len(text.lstrip("-").lstrip("0")) > 19:
+        raise ValueError("integer out of range: %r" % text[:40])
+    n = int(text)
+    if n < _I64_MIN or n > _I64_MAX:
+        raise ValueError("integer out of range: %r" % text[:40])
+    return n
+
+
+def read_number_text(text):
+    """Number text (ruling 2b of 0.11) -> the nearest double. Text whose
+    nearest double is infinite is refused; `-` and a value that reads as zero
+    is -0.0. Raises ValueError."""
+    if not _NUM_TEXT.match(text):
+        raise ValueError("not number text: %r" % text[:40])
+    v = float(text)  # correctly rounded, ties to even
+    if not math.isfinite(v):
+        raise ValueError("number out of range: %r" % text[:40])
+    return v
+
+
+def read_uint_text(text, bits=None):
+    """An unsigned decimal integer (ruling 2c of 0.11): ASCII digits only,
+    leading zeros allowed; with `bits`, below 2^bits. Raises ValueError."""
+    if not _UINT_TEXT.match(text):
+        raise ValueError("not an unsigned decimal integer: %r" % text[:40])
+    if bits is not None and len(text.lstrip("0")) > len(str(1 << bits)):
+        raise ValueError("%r does not fit %d bit(s)" % (text[:40], bits))
+    n = int(text)
+    if bits is not None and n >= (1 << bits):
+        raise ValueError("%r does not fit %d bit(s)" % (text[:40], bits))
+    return n
+
+
+def is_uint_text(text):
+    return _UINT_TEXT.match(text) is not None
+
+
+def read_json_int(text):
+    """A JSON number through `int` (ruling 2d of 0.11): its exact value must be
+    an integer within a signed 64-bit integer. Raises ValueError."""
+    if _INT_TEXT.match(text):
+        return read_int_text(text)
+    try:
+        d = Decimal(text)
+    except ArithmeticError:
+        raise ValueError("not a number: %r" % text[:40])
+    if not d.is_finite():
+        raise ValueError("not a number: %r" % text[:40])
+    if d.is_zero():
+        return 0
+    if d.adjusted() > 18:
+        raise ValueError("integer out of range: %r" % text[:40])
+    if d.adjusted() < 0 or d != d.to_integral_value():
+        raise ValueError("not an integer: %r" % text[:40])
+    n = int(d)
+    if n < _I64_MIN or n > _I64_MAX:
+        raise ValueError("integer out of range: %r" % text[:40])
+    return n
+
+
+def read_json_float(text):
+    """A JSON number through `float` (ruling 2d of 0.11): the nearest double;
+    infinite is refused. Raises ValueError."""
+    v = float(text)
+    if not math.isfinite(v):
+        raise ValueError("number out of range: %r" % text[:40])
+    return v
+
+
+_JSON_INT = re.compile(r"-?[0-9]+\Z")
+
+
 def canonical_number(raw):
     """Canonical text of a JSON number given its raw text (used for residue)."""
-    if _INTEGER.match(raw):
+    if _JSON_INT.match(raw):
         return format_int(int(raw))
     return format_float(float(raw))
 
 
 def round_half_away(x):
-    """Round to the nearest integer, halves away from zero (matches Rust f64::round
-    and so the reference engine)."""
+    """Round a double to the nearest integer, halves away from zero, exactly
+    (ruling 4a of 0.11)."""
     sign = -1 if x < 0 else 1
     ax = abs(x)
     whole = math.floor(ax)
@@ -108,13 +189,12 @@ class FloatT(Transform):
     yields = "float"
 
     def decode(self, text):
-        t = text.strip()
-        if not _DECIMAL.match(t):
-            raise ValueError("not a decimal number: %r" % text)
-        v = float(t)
-        if not math.isfinite(v):
-            raise ValueError("out of range: %r" % text)
-        return v
+        """Number text (ruling 2b of 0.11): nothing is trimmed."""
+        return read_number_text(text)
+
+    def decode_json(self, text):
+        """A JSON number (ruling 2d of 0.11)."""
+        return read_json_float(text)
 
     def encode(self, value):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -128,21 +208,12 @@ class IntT(Transform):
     yields = "int"
 
     def decode(self, text):
-        t = text.strip()
-        if _INTEGER.match(t):
-            return int(t)
-        # Tolerate an integral decimal such as "5.0" or "1e3".
-        if _DECIMAL.match(t):
-            d = Decimal(t)
-            # An exponent makes short text a huge integer (`2e47686170` has 47
-            # million digits): building it takes time and memory without bound
-            # (0.8, "Malformed input"). An integer of more digits than a digit
-            # string may hold here is out of range, as `int(t)` above finds it.
-            if d and d.adjusted() >= _INT_MAX_DIGITS:
-                raise ValueError("out of range: %r" % text[:40])
-            if d == d.to_integral_value():
-                return int(d)
-        raise ValueError("not an integer: %r" % text)
+        """Integer text (ruling 2a of 0.11): nothing is trimmed."""
+        return read_int_text(text)
+
+    def decode_json(self, text):
+        """A JSON number (ruling 2d of 0.11): an integer value, every digit kept."""
+        return read_json_int(text)
 
     def encode(self, value):
         if isinstance(value, bool):
@@ -167,21 +238,27 @@ class Iso8601MsT(Transform):
     yields = "int"
 
     def decode(self, text):
-        m = _ISO.match(text.strip())
+        """Ruling 3 of 0.11: the grammar is exact, nothing is trimmed, the
+        fraction is cut to milliseconds, and the instant less its offset
+        lies in the years 0001 to 9999."""
+        m = _ISO.match(text)
         if not m:
-            raise ValueError("not ISO 8601 YYYY-MM-DDTHH:MM:SS[.fff] with Z or +hh:mm / -hh:mm: %r" % text)
+            raise ValueError("not ISO 8601 YYYY-MM-DDTHH:MM:SS[.f+] with Z or +hh:mm / -hh:mm: %r" % text[:40])
         y, mo, d, h, mi, s, frac, sign, oh, om = m.groups()
         try:
             dt = datetime(int(y), int(mo), int(d), int(h), int(mi), int(s), tzinfo=timezone.utc)
         except ValueError as e:
-            raise ValueError("invalid date/time %r: %s" % (text, e))
-        ms = int((frac or "").ljust(3, "0")[:3])
+            raise ValueError("invalid date/time %r: %s" % (text[:40], e))
+        ms = int((frac or "")[:3].ljust(3, "0"))
         offset_ms = 0
         if sign is not None:
             if int(oh) > 23 or int(om) > 59:
-                raise ValueError("invalid UTC offset in %r" % text)
+                raise ValueError("invalid UTC offset in %r" % text[:40])
             offset_ms = (int(oh) * 60 + int(om)) * 60000 * (-1 if sign == "-" else 1)
-        return (dt - _EPOCH) // _MS + ms - offset_ms
+        value = (dt - _EPOCH) // _MS + ms - offset_ms
+        if value < _ISO_MIN or value > _ISO_MAX:
+            raise ValueError("the instant of %r lies outside the years 0001 to 9999" % text[:40])
+        return value
 
     def encode(self, value):
         if isinstance(value, bool) or not isinstance(value, int):
@@ -189,12 +266,9 @@ class Iso8601MsT(Transform):
                 value = int(value)
             else:
                 raise ValueError("iso8601_ms needs integer epoch ms, got %r" % (value,))
-        try:
-            dt = _EPOCH + timedelta(milliseconds=value)
-        except OverflowError:
+        if value < _ISO_MIN or value > _ISO_MAX:
             raise ValueError("epoch ms out of range: %r" % value)
-        if dt.year < 1 or dt.year > 9999:
-            raise ValueError("epoch ms out of range: %r" % value)
+        dt = _EPOCH + timedelta(milliseconds=value)
         return "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ" % (
             dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, dt.microsecond // 1000,
         )
@@ -266,7 +340,20 @@ class UintT(BitsTransform):
             if not value.is_integer():
                 raise ValueError("uint transform got non-integral %r" % value)
             value = int(value)
+        if self.length >= 64:  # every model integer, as its two's-complement pattern (ruling 2 of 0.5)
+            lo, hi = _I64_MIN, _I64_MAX
+        else:
+            lo, hi = 0, self.mask
+        _check_range(self.name, value, lo, hi, self.length)
         return value & self.mask
+
+
+def _check_range(name, value, lo, hi, length):
+    """Ruling 4b of 0.11: a value outside the field's range is refused, never wrapped."""
+    if value < lo or value > hi:
+        raise ValueError(
+            "%s: value %d does not fit the %d-bit field (%d..%d)" % (name, value, length, lo, hi)
+        )
 
 
 class TwosT(BitsTransform):
@@ -282,6 +369,7 @@ class TwosT(BitsTransform):
             if not value.is_integer():
                 raise ValueError("twos transform got non-integral %r" % value)
             value = int(value)
+        _check_range(self.name, value, -(1 << (self.length - 1)), (1 << (self.length - 1)) - 1, self.length)
         return value & self.mask
 
 
@@ -297,17 +385,22 @@ class LinscaleT(BitsTransform):
         self.range = value_range
 
     def decode(self, bits):
-        return self._twos(bits) / self.maxpos * self.range
+        # Ruling 4c of 0.11: the integer becomes the nearest double, then
+        # `v / maxpos * range` in doubles.
+        return float(self._twos(bits)) / self.fmaxpos * self.range
+
+    @property
+    def fmaxpos(self):
+        return float(self.maxpos)
 
     def encode(self, value):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("linscale transform needs a number, got %s" % type(value).__name__)
-        if not math.isfinite(float(value)):
-            raise ValueError("linscale transform got non-finite %r" % value)
-        return round_half_away(float(value) / self.range * self.maxpos) & self.mask
-
-
-_DEC_INT = re.compile(r"[+-]?\d+\Z")
+        x = _finite_number("linscale", value)
+        q = x / self.range * self.fmaxpos
+        if not math.isfinite(q):
+            raise ValueError("%s: value %r is out of the field's range" % (self.name, value))
+        r = round_half_away(q)
+        _check_range(self.name, r, -(1 << (self.length - 1)), (1 << (self.length - 1)) - 1, self.length)
+        return r & self.mask
 
 
 def _finite_number(name, value):
@@ -450,48 +543,113 @@ class AsciiT(BitsTransform):
         return body + b"\x00" * (self.nbytes - len(body))
 
 
+class SixbitT(BitsTransform):
+    """`len / 6` characters of six bits each (0.14). The wire hands `decode`
+    the six-bit values, first character first, each one's six bits read in
+    the pack's bit order, and takes such values back from `encode`
+    (`as_sixbit`). Values 0 to 31 are `@` to `_`, 32 to 63 space to `?`.
+    Trailing `@` are removed on decode (with `trim`, the whole trailing run of
+    `@` and space, in any mix) and added on encode; an all-`@` field is the
+    empty string, present (ruling 6 of 0.14)."""
+
+    yields = "string"
+    as_sixbit = True
+    trim = False
+
+    def __init__(self, name, length):
+        self.name = name
+        self.length = length
+        self.nchars = length // 6
+
+    def decode(self, raw):
+        text = "".join(chr(0x40 + v) if v < 32 else chr(v) for v in raw)
+        return text.rstrip("@ ") if self.trim else text.rstrip("@")
+
+    def encode(self, value):
+        if not isinstance(value, str):
+            raise ValueError("sixbit transform needs a str, got %s" % type(value).__name__)
+        out = []
+        for c in value:
+            o = ord(c)
+            if not 0x20 <= o <= 0x5F:
+                raise ValueError("sixbit: character %r is outside 0x20..0x5f" % c)
+            out.append(o - 0x40 if o >= 0x40 else o)
+        if len(out) > self.nchars:
+            raise ValueError("sixbit: text of %d character(s) does not fit %d" % (len(out), self.nchars))
+        out.extend([0] * (self.nchars - len(out)))
+        return tuple(out)
+
+
 def is_bits_transform_name(name):
-    return name in ("uint", "twos", "f32", "f64", "ascii") or name.startswith(("linscale:", "uscale:", "sscale:"))
+    return name in ("uint", "twos", "f32", "f64", "ascii", "sixbit") or name.startswith(("linscale:", "uscale:", "sscale:"))
 
 
 def bits_len_allowed(name, length):
     """Whether a bits transform allows bit length `length` (spec 0.5: `f32` 32,
-    `f64` 64, `ascii` a multiple of 8 from 8 to 2040; the rest 1..=64)."""
+    `f64` 64, `ascii` a multiple of 8 from 8 to 2040; 0.14: `sixbit` a
+    multiple of 6 from 6 to 1530; the rest 1..=64)."""
     if name == "f32":
         return length == 32
     if name == "f64":
         return length == 64
     if name == "ascii":
         return 8 <= length <= 2040 and length % 8 == 0
+    if name == "sixbit":
+        return 6 <= length <= 1530 and length % 6 == 0
     return 1 <= length <= 64
 
 
-def _build_scale(name, length):
+def _nonzero_number(text, what):
+    """Number text (2b) that does not read as zero (ruling 4d of 0.11)."""
+    v = read_number_text(text)
+    if v == 0:
+        raise ValueError("%s %r reads as zero" % (what, text))
+    return v
+
+
+def scale_params(name):
+    """`uscale:<factor>[:<offset>]` and `sscale:...` (ruling 4d of 0.11) ->
+    (factor, fraction, offset). The factor is number text that is not zero,
+    or `<num>/<den>` of two unsigned decimal integers, neither zero; the
+    offset is number text. Raises ValueError (`bad-directive`)."""
     parts = name.split(":")
     if len(parts) not in (2, 3):
         raise ValueError("%s takes the form %s:<factor>[:<offset>]" % (parts[0], parts[0]))
     factor = fraction = None
     if "/" in parts[1]:
         num, _, den = parts[1].partition("/")
-        if not _DEC_INT.match(num) or not _DEC_INT.match(den):
-            raise ValueError("a fraction factor is <num>/<den> of two decimal integers")
-        fraction = (float(int(num)), float(int(den)))
-        if fraction[0] == 0 or fraction[1] == 0:
+        n, d = read_uint_text(num), read_uint_text(den)
+        if n == 0 or d == 0:
             raise ValueError("a fraction factor's num and den must be non-zero")
+        try:
+            fraction = (float(n), float(d))
+        except OverflowError:
+            raise ValueError("a fraction factor's num or den is beyond a double")
     else:
-        if not _DECIMAL.match(parts[1]):
-            raise ValueError("factor must be a decimal number or <num>/<den>")
-        factor = float(parts[1])
-        if factor == 0 or not math.isfinite(factor):
-            raise ValueError("factor must be finite and non-zero")
-    offset = 0.0
-    if len(parts) == 3:
-        if not _DECIMAL.match(parts[2]):
-            raise ValueError("offset must be a decimal number")
-        offset = float(parts[2])
-        if not math.isfinite(offset):
-            raise ValueError("offset must be finite")
-    return ScaleT(name, length, parts[0] == "sscale", factor, fraction, offset)
+        factor = _nonzero_number(parts[1], "factor")
+    offset = read_number_text(parts[2]) if len(parts) == 3 else 0.0
+    return factor, fraction, offset
+
+
+def linscale_params(name):
+    """`linscale:<maxpos>:<range>` (ruling 4d of 0.11) -> (maxpos, range).
+    Raises ValueError (`bad-directive`)."""
+    parts = name.split(":")
+    if len(parts) != 3:
+        raise ValueError("linscale takes the form linscale:<maxpos>:<range>")
+    maxpos = read_uint_text(parts[1])
+    if maxpos < 1:
+        raise ValueError("linscale maxpos must be at least 1")
+    try:
+        float(maxpos)
+    except OverflowError:  # no upper bound is ruled; one beyond a double cannot be computed with
+        raise ValueError("linscale maxpos is beyond a double")
+    return maxpos, _nonzero_number(parts[2], "linscale range")
+
+
+def _build_scale(name, length):
+    factor, fraction, offset = scale_params(name)
+    return ScaleT(name, length, name.startswith("sscale"), factor, fraction, offset)
 
 
 def build_bits_transform(name, length):
@@ -507,23 +665,62 @@ def build_bits_transform(name, length):
         return F64T(name, length)
     if name == "ascii":
         return AsciiT(name, length)
+    if name == "sixbit":
+        return SixbitT(name, length)
     if name.startswith(("uscale:", "sscale:")):
         return _build_scale(name, length)
     if name.startswith("linscale:"):
-        parts = name.split(":")
-        if len(parts) != 3:
-            raise ValueError("linscale takes the form linscale:<maxpos>:<range>")
-        try:
-            maxpos = int(parts[1])
-            value_range = float(parts[2])
-        except ValueError:
-            raise ValueError("linscale maxpos and range must be numbers")
-        if maxpos <= 0:
-            raise ValueError("linscale maxpos must be positive")
-        if value_range == 0:
-            raise ValueError("linscale range must be non-zero")
+        maxpos, value_range = linscale_params(name)
         return LinscaleT(name, length, maxpos, value_range)
     raise ValueError("unknown bits transform %r" % name)
+
+
+# Every transform of the specification, by the text before its first `:`
+# (ruling 5 of 0.11), and the wires each is valid on.
+_TEXTUAL = ("xml", "geojson", "json", "text")
+TRANSFORM_WIRES = {
+    "string": _TEXTUAL, "float": _TEXTUAL, "int": _TEXTUAL, "iso8601_ms": _TEXTUAL, "bool": ("json",),
+    "uint": ("bits", "tlv"), "twos": ("bits", "tlv"), "linscale": ("bits",), "uscale": ("bits", "tlv"),
+    "sscale": ("bits", "tlv"), "f32": ("bits", "tlv"), "f64": ("bits", "tlv"), "ascii": ("bits",),
+    "sixbit": ("bits",),  # 0.14
+    "utf8": ("tlv",), "hex": ("tlv",),  # 0.13
+    "pstring": ("protobuf",), "pvarint": ("protobuf",), "psint": ("protobuf",), "pdouble": ("protobuf",),
+    "pfloat": ("protobuf",),
+    "dec": ("text",), "dm": ("text",), "hms": ("text",), "hms_dmy": ("text",),
+}
+
+
+class UnknownTransformName(LookupError):
+    pass
+
+
+def check_transform_text(name):
+    """Step 7 of ruling 5b of 0.11, on the transform's text alone: its name
+    (the text before the first `:`) must be a transform of the specification
+    (else UnknownTransformName), and its parameters must be valid (else
+    ValueError). -> the name."""
+    head, colon, _ = name.partition(":")
+    if head not in TRANSFORM_WIRES:
+        raise UnknownTransformName(head)
+    if head == "linscale":
+        linscale_params(name)
+    elif head in ("uscale", "sscale"):
+        scale_params(name)
+    elif head in ("dec", "dm", "hms", "hms_dmy") or (head == "int" and colon):
+        from .wire_text import build_transform  # the parameters of the `text` transforms (0.10)
+
+        build_transform(name)
+    elif colon:
+        raise ValueError("transform %s takes no parameter" % head)
+    return head
+
+
+def transform_valid_on(name, wire):
+    """Whether a transform whose text passed `check_transform_text` is valid on `wire`."""
+    head, colon, _ = name.partition(":")
+    if head == "int" and colon:
+        return wire == "text"
+    return wire in TRANSFORM_WIRES[head]
 
 
 # --- protobuf transforms (version 0.3) --------------------------------------
@@ -663,19 +860,13 @@ def is_protobuf_transform_name(name):
 
 
 def read_typed(text, type_name):
-    """Read `text` as a model type (`string`, `int`, `float`). Raises ValueError."""
+    """Read `text` as a model type (`string`, `int`, `float`) by the grammars
+    of ruling 2 of 0.11 (2a for `int`, 2b for `float`). Raises ValueError."""
     if type_name == "string":
         return text
     if type_name == "int":
-        if not _INTEGER.match(text):
-            raise ValueError("not an integer: %r" % text)
-        return int(text)
-    if not _DECIMAL.match(text):
-        raise ValueError("not a decimal number: %r" % text)
-    v = float(text)
-    if not math.isfinite(v):
-        raise ValueError("out of range: %r" % text)
-    return v
+        return read_int_text(text)
+    return read_number_text(text)
 
 
 def canonical_text(value, type_name):
@@ -689,28 +880,25 @@ def canonical_text(value, type_name):
 
 
 def table_side_type(values):
-    """The type of one side of a value table: `int` when every value is an
-    integer, `float` when every one is a number, otherwise `string`."""
-    if values and all(_INTEGER.match(v) for v in values):
+    """The type of one side of a value table: `int` when every value is
+    integer text (2a), `float` when every one is number text (2b), otherwise
+    `string`."""
+    if values and all(_INT_TEXT.match(v) for v in values):
         return "int"
-    if values and all(_DECIMAL.match(v) for v in values):
+    if values and all(_NUM_TEXT.match(v) for v in values):
         return "float"
     return "string"
 
 
 def parse_factor(text):
-    """A scale factor as in ruling 1 of 0.5 -> (factor, None) or (None, (num, den)).
-    Raises ValueError."""
+    """The parameter of the `scale` derive function (ruling 1 of 0.5, ruling
+    2c of 0.11) -> (factor, None) or (None, (num, den)): number text, or
+    `<num>/<den>` where `<num>` is integer text (2a) and `<den>` an unsigned
+    decimal integer that is not zero. Raises ValueError."""
     if "/" in text:
         num, _, den = text.partition("/")
-        if not _DEC_INT.match(num) or not _DEC_INT.match(den):
-            raise ValueError("a fraction factor is <num>/<den> of two decimal integers")
-        if int(den) == 0:
+        n, d = read_int_text(num), read_uint_text(den)
+        if d == 0:
             raise ValueError("a fraction factor's den must be non-zero")
-        return None, (float(int(num)), float(int(den)))
-    if not _DECIMAL.match(text):
-        raise ValueError("factor must be a decimal number or <num>/<den>")
-    factor = float(text)
-    if not math.isfinite(factor):
-        raise ValueError("factor must be finite")
-    return factor, None
+        return None, (float(n), float(d))
+    return read_number_text(text), None
