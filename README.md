@@ -5,7 +5,7 @@ kit: Anduril Lattice and Picogrid ECN today, and the next vendor's tomorrow.
 
 Systems that speak an open standard (TAK servers over Cursor on Target, SAPIENT controllers, ASTERIX consumers) are reached
 through [goat-transformers](https://github.com/USAREUR-AF/goat-transformers), not through this repository. The scope is set
-by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/pull/1084) (proposed).
+by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/blob/main/docs/adr/1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md) (accepted).
 
 <p align="center"><img src="docs/img/where-it-fits.svg" width="820" alt="Tracks on the goat fabric reach outside systems three ways. Systems that speak an open standard, such as TAK servers, SAPIENT controllers and ASTERIX consumers, are reached through goat-transformers and its transport adapters. Vendor systems reached through the vendor's own software kit, such as Anduril Lattice and Picogrid ECN, are reached through this repository's vendor bridges. Receivers that cannot join the mesh are reached through an octo-pod's release gate and egress."></p>
 

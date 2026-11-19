@@ -4,7 +4,7 @@ Instructions for AI coding agents, and a short version for people working here. 
 
 ## What this repository is
 
-open-entity-gateway holds bridges between the goat fabric and vendor systems, one package per vendor under `vendors/`. Its scope is set by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/pull/1084) (proposed). Open standards (Cursor on Target, SAPIENT, ASTERIX) belong to [goat-transformers](https://github.com/USAREUR-AF/goat-transformers); this repository's own senders and encoders for them are moving there and keep working until goat-transformers passes the same tests.
+open-entity-gateway holds bridges between the goat fabric and vendor systems, one package per vendor under `vendors/`. Its scope is set by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/blob/main/docs/adr/1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md) (accepted). Open standards (Cursor on Target, SAPIENT, ASTERIX) belong to [goat-transformers](https://github.com/USAREUR-AF/goat-transformers); this repository's own senders and encoders for them are moving there and keep working until goat-transformers passes the same tests.
 
 ## Rules
 

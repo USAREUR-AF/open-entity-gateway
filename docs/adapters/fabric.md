@@ -1,6 +1,6 @@
 # Fabric destination (`adapter: fabric`)
 
-**Withdrawn** by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/pull/1084) (proposed): do not build on it. It republished encoded tracks for an octo-pod to relay, a hop the routes in the [README](../../README.md) do not need. The code stays until it is removed with the other open-standard parts; this page describes it until then.
+**Withdrawn** by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/blob/main/docs/adr/1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md) (accepted): do not build on it. It republished encoded tracks for an octo-pod to relay, a hop the routes in the [README](../../README.md) do not need. The code stays until it is removed with the other open-standard parts; this page describes it until then.
 
 Publishes each track, encoded by one of the open-standard adapters, to one key on the goat fabric (Zenoh): one payload per sample. This is the form an [octo-pod](https://github.com/USAREUR-AF/octo-pod) egress destination relays to a receiver that cannot join the mesh. octo-pod converts no format, so the gateway encodes and the pod delivers ([design/track-egress.md](../design/track-egress.md)).
 
