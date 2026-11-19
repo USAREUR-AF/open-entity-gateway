@@ -1,73 +1,56 @@
-# Track egress: one way out of the fabric
+# Track egress: how tracks leave the fabric
 
-**Status: designed; steps 1 and 2 built.** The gateway accepts Canonical Track v2 (step 1) and reads the fabric on named key expressions (step 2); the other steps are not built. Each step below is its own pull request in the repository named, and its tracking issue is linked at the end.
+**Status: designed; steps 1 to 3 built.** The gateway accepts Canonical Track v2 (step 1) and reads the fabric on named key expressions (step 2), and goat-transformers holds the gateway's example tracks as conformance vectors (step 3). The other steps are not built. Each step is its own pull request, and its tracking issue is linked at the end.
 
-Five goat repositories turn data into tracks or move tracks between systems, and three of them encode Cursor-on-Target, SAPIENT and ASTERIX each in their own code. This design makes the goat fabric (Zenoh) the one place tracks meet, and this gateway the one way they leave the fabric for systems that are not on it. Each format is encoded in one place, goat-transformers, and checked by its conformance vectors.
+Five goat repositories turn data into tracks or move tracks between systems. This design gives each one a single job: producers publish tracks on the goat fabric (Zenoh); this gateway reads them, maps them and encodes each one once, through goat-transformers; and octo-pod's egress, which is built, carries the encoded payloads to receivers that cannot join the mesh.
 
-## Where each repository stands
+<p align="center"><img src="../img/track-egress.svg" width="820" alt="Producers publish tracks or records on the fabric; the gateway reads named keys and encodes each track once, through goat-transformers; it sends to receivers it can reach, or publishes the encoded payload to a release key; an octo-pod egress destination delivers that key to a receiver that cannot join the mesh."></p>
 
-| Repository | How its data reaches other systems today | Track encoders it holds |
+## Who does what
+
+| Repository | Job in this design | What exists today |
 |---|---|---|
-| [first-bite](https://github.com/USAREUR-AF/first-bite) | One record per decoded message on a ZeroMQ socket; sinks to Zenoh, HTTP, object storage and files; CoT to TAK through its `cot` transform | CoT |
-| [open-billie](https://github.com/USAREUR-AF/open-billie) | A sensor kit maps fields into Billie's canonical record; the shared Rust translator encodes it and publishes on a local Zenoh route, bridged to the fabric over mTLS | CoT, ASTERIX CAT062, SAPIENT |
-| [octo-pod](https://github.com/USAREUR-AF/octo-pod) | Takes in sensor feeds, records and audits them, and releases only the declared keys onto the fabric; an egress arm sends released data to a receiver or a partner's Zenoh router | none |
-| [goat-transformers](https://github.com/USAREUR-AF/goat-transformers) | A library and command: any supported format to any other, each format a data pack, seven engines (Python among them) that must agree byte for byte | packs `cot-xml`, `cot-protobuf`, `sapient`, `sapient-v1`, `asterix-cat062`, `canonical-track-v2` |
-| open-entity-gateway (this repository) | Reads records over HTTP, from a file or from first-bite's ZeroMQ socket; sends to the destinations a configuration lists | CoT, SAPIENT, ASTERIX CAT062, plus vendor adapters |
+| [first-bite](https://github.com/USAREUR-AF/first-bite) | Producer: decoded records on the fabric through its Zenoh sink | Built. Also writes CoT to TAK itself, which stays for the CoT-only case |
+| [open-billie](https://github.com/USAREUR-AF/open-billie) | Producer that encodes at the node: CoT, ASTERIX CAT062 and SAPIENT on the fabric | Built. Its translator encodes natively or, as a built option off by default, through goat-transformers from Canonical Track v2 ([GOAT_TRANSFORMERS_ENCODER_OPTION.md](https://github.com/USAREUR-AF/open-billie/blob/main/docs/architecture/GOAT_TRANSFORMERS_ENCODER_OPTION.md)). Its encoded keys can go to an octo-pod egress destination without the gateway |
+| [octo-pod](https://github.com/USAREUR-AF/octo-pod) | Delivery to receivers that cannot join: `udp://`, `tcp://`, `tcp-server://` and `sapient://` egress destinations, each fed by the pod's downlink allow list | Built (0.4.0 and later). By its own design it converts no format: "the producer supplies the receiver's format before publishing it" ([design-egress-gateway.md](https://github.com/USAREUR-AF/octo-pod/blob/main/docs/design-egress-gateway.md)) |
+| [goat-transformers](https://github.com/USAREUR-AF/goat-transformers) | Encoding: one pack per format, seven engines that agree byte for byte | Built. Packs `cot-xml`, `sapient`, `asterix-cat062`, `canonical-track-v2` |
+| open-entity-gateway (this repository) | Mapping and encoding: records and tracks in, each format written once, to a destination it can reach or to a release key on the fabric | Inputs built; encoders are its own today; the fabric destination is not built |
 
 ## The design
 
-```mermaid
-flowchart LR
-  FB["first-bite"] --> F
-  BI["open-billie"] --> F
-  OP["octo-pod (released keys)"] --> F
-  F[("goat fabric (Zenoh)")] --> GW
-  subgraph GW["open-entity-gateway"]
-    direction TB
-    IN["Zenoh input: named key expressions"]
-    ENC["Encoding through goat-transformers packs"]
-    DST["Destinations, delivery, SAPIENT session, vendor adapters"]
-    IN --> ENC --> DST
-  end
-  GW --> TAK["TAK"]
-  GW --> SAP["SAPIENT node"]
-  GW --> AST["ASTERIX consumer"]
-  GW -.-> VEN["vendor systems"]
-```
-
-1. **Tracks on the fabric use one shape.** A producer that publishes tracks publishes them as Canonical Track v2 (`billie.dev/track-v2`, open-billie's `schemas/canonical-track-v2.schema.json`, already the goat-transformers pack `canonical-track-v2`). A producer that publishes records instead, as first-bite does, keeps doing so, and the gateway's mapping files turn those records into tracks as they do today.
-2. **The gateway reads the fabric.** A Zenoh input subscribes to key expressions its configuration names. It never subscribes to the whole keyspace, which goat reserves for a named grant. What the gateway may read is decided by the fabric's access control, never by the gateway.
-3. **Each format is encoded in one place.** The gateway's CoT, SAPIENT and ASTERIX CAT062 output comes from the goat-transformers packs through its Python engine. The gateway keeps what only it does: per-destination configuration, transport and delivery, the SAPIENT registration and status session, the presence event, and the vendor adapters.
-4. **The gateway is the way out for systems off the fabric.** octo-pod's release gate stays where it is; a gateway configured beside a pod subscribes only to the keys the pod released. open-billie and first-bite keep publishing to the fabric, and a receiver that is not on the fabric is served by a gateway.
+1. **Producers that encode keep encoding; the others publish records or tracks.** open-billie already writes the standard formats at the node, through goat-transformers as an option, and its keys go to a pod as they are. A producer that does not encode publishes Canonical Track v2 (`billie.dev/track-v2`) or records, as first-bite does, and the gateway encodes for it.
+2. **The gateway reads the fabric on named keys only.** A key made only of wildcards is refused. What the gateway may read is decided by the fabric's access control.
+3. **Each format is encoded once, in goat-transformers.** The gateway's CoT, SAPIENT and ASTERIX CAT062 output comes from the packs through the Python engine, with the context open-billie's option gives them: a scoped track identity (`track.scoped_id`), the stale time and `how` for CoT, SAC and SIC for CAT062, the node and report identifiers for SAPIENT. The gateway keeps per-destination configuration, transport and delivery, the SAPIENT session for destinations it reaches itself, and the vendor adapters.
+4. **Two ways out.** A receiver the gateway host can reach gets one of the gateway's own destinations. A receiver that cannot join the mesh is fed by octo-pod: the gateway publishes the encoded payload to a release key (`release/<lane>/…`), and a pod destination whose downlink allow list names that key delivers it. For SAPIENT the gateway publishes detection reports and the pod's `sapient://` destination runs the session. The pod's two decisions (the release flag and the downlink allow list) and its audit stay where they are.
 5. **The gateway's rules do not change.** It sends only to destinations a configuration lists, and a track that cannot fill a destination's interface is refused by field name, with nothing sent.
 
 ## Order of work
 
-Each step is one pull request that can be reverted on its own.
-
-| Step | Repository | Change | Done when |
+| Step | Repository | Change | Status |
 |---|---|---|---|
-| 1 | open-entity-gateway | Accept Canonical Track v2 as input beside records (file and HTTP) | the example tracks round-trip to all three standards |
-| 2 | open-entity-gateway | Zenoh input on named key expressions | a test router delivers to every destination type |
-| 3 | goat-transformers | Add the gateway's CoT, SAPIENT and CAT062 test vectors to the packs | all seven engines pass them |
-| 4 | open-entity-gateway | Encode through goat-transformers, then retire the gateway's own encoders one release later | the gateway's tests pass unchanged with the packs |
-| 5 | octo-pod | A documented setup of a gateway subscribed to released keys | a pod releases a key and a TAK receiver gets the track |
-| 6 | open-billie, first-bite | Point receivers that are not on the fabric to the gateway | the docs say so; first-bite's CoT sink stays for the CoT-only case |
+| 1 | open-entity-gateway | Accept Canonical Track v2 as input | built |
+| 2 | open-entity-gateway | Zenoh input on named key expressions | built |
+| 3 | goat-transformers | The gateway's example tracks as conformance vectors | built; the differences found are listed in goat-transformers#16 |
+| 4 | open-entity-gateway | A fabric destination: publish each encoded payload to a named key, for a pod to deliver | not built |
+| 5 | open-entity-gateway | Encode through goat-transformers with the same context keys open-billie's option uses; retire the gateway's own encoders one release later | not built; first settle the CAT062 MRH bit and compare SAPIENT field by field |
+| 6 | octo-pod | A documented path: gateway publishes to a release key, a pod destination delivers it | not built; depends on step 4 |
+| 7 | first-bite, open-billie | Point receivers off the fabric to the right path: first-bite's to the gateway, open-billie's encoded keys to a pod | first-bite: first-bite#74; open-billie: its maintainers |
 
 ## Open questions
 
-- Whether open-billie keeps publishing standard-format renderings onto the fabric besides Canonical Track v2. That is the open-billie maintainers' decision.
-- Whether first-bite should also publish Canonical Track v2 for the dictionaries that carry positions, or leave that to gateway mappings.
+- Whether first-bite also publishes Canonical Track v2 for dictionaries that carry positions, or leaves record-to-track to gateway mapping files.
+- The release lane the gateway publishes encoded payloads under, and who owns it, per goatnet.
 
 ## Tracking
 
 | Step | Issue |
 |---|---|
-| 1 | [open-entity-gateway#6](https://github.com/USAREUR-AF/open-entity-gateway/issues/6) |
-| 2 | [open-entity-gateway#7](https://github.com/USAREUR-AF/open-entity-gateway/issues/7) |
-| 3 | [goat-transformers#14](https://github.com/USAREUR-AF/goat-transformers/issues/14) |
-| 4 | [open-entity-gateway#8](https://github.com/USAREUR-AF/open-entity-gateway/issues/8) |
-| 5 | [octo-pod#34](https://github.com/USAREUR-AF/octo-pod/issues/34) |
-| 6 | [open-billie#29](https://github.com/USAREUR-AF/open-billie/issues/29), [first-bite#73](https://github.com/USAREUR-AF/first-bite/issues/73) |
+| 1 | [open-entity-gateway#6](https://github.com/USAREUR-AF/open-entity-gateway/issues/6) (closed) |
+| 2 | [open-entity-gateway#7](https://github.com/USAREUR-AF/open-entity-gateway/issues/7) (closed) |
+| 3 | [goat-transformers#14](https://github.com/USAREUR-AF/goat-transformers/issues/14) (closed) |
+| 4 | [open-entity-gateway#15](https://github.com/USAREUR-AF/open-entity-gateway/issues/15) |
+| 5 | [open-entity-gateway#8](https://github.com/USAREUR-AF/open-entity-gateway/issues/8) |
+| 6 | [octo-pod#34](https://github.com/USAREUR-AF/octo-pod/issues/34) |
+| 7 | [open-billie#29](https://github.com/USAREUR-AF/open-billie/issues/29), [first-bite#73](https://github.com/USAREUR-AF/first-bite/issues/73) |
 
-OARIS and C2SIM as goat-transformers packs: [goat-transformers#15](https://github.com/USAREUR-AF/goat-transformers/issues/15).
+OARIS and C2SIM as goat-transformers packs: [goat-transformers#15](https://github.com/USAREUR-AF/goat-transformers/issues/15). A course computed with `atan2` differs in its last digit between engines: [goat-transformers#17](https://github.com/USAREUR-AF/goat-transformers/issues/17).
