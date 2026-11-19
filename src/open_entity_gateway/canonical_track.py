@@ -5,7 +5,8 @@ open-billie `schemas/canonical-track-v2.schema.json`, the goat-transformers
 pack `canonical-track-v2`) is turned into a record, so that the mapping file
 `mappings/canonical-track-v2.yml` makes it a track like any other record. The
 record keeps every value the track carries; nothing is guessed. Velocity east
-and north become course and speed, the two motion fields a mapping reads.
+and north become course and speed, the two motion fields a mapping reads, and
+are kept as velocity_east and velocity_north for adapters that write components.
 """
 
 from __future__ import annotations
@@ -74,6 +75,7 @@ def track_record(track: dict[str, Any]) -> dict[str, Any]:
     if isinstance(velocity, dict) and velocity.get("eastMps") is not None and velocity.get("northMps") is not None:
         east = _number(velocity["eastMps"], "velocity.eastMps")
         north = _number(velocity["northMps"], "velocity.northMps")
+        body["velocity_east"], body["velocity_north"] = east, north
         body["speed"] = math.hypot(east, north)
         body["course"] = math.degrees(math.atan2(east, north)) % 360.0
 

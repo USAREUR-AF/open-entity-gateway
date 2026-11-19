@@ -17,6 +17,7 @@ A mapping file says which records become tracks and where each value of a track 
 | `time` | no, default `capture` | `capture`: the record's capture time (`timestamp`); `received`: the moment the gateway received the record |
 | `name` | no | a display name, in any value form below |
 | `motion.course`, `motion.speed` | no, together | field names of course over ground in degrees from true north and speed in metres per second |
+| `motion.east`, `motion.north` | no, together, with course and speed | field names of the velocity's east and north components in metres per second, when the source gives them; SAPIENT writes these as they are instead of computing them from course and speed |
 | `optional` | no | the altitude field and the motion fields that may be absent or null: the track then has no altitude, or no motion. Any other field listed is refused. [mappings/canonical-track-v2.yml](../mappings/canonical-track-v2.yml) uses it, because a Canonical Track v2 may carry neither |
 | `asterix`, `sapient`, `lattice`, `picogrid_ecn` | no | one block per adapter, read by that adapter only; see [adapters/](adapters/) |
 

@@ -76,7 +76,9 @@ def canonical(track: Track, simulated: bool = False) -> str:
         "position": position,
         "simulated": simulated,
     }
-    if track.course is not None and track.speed is not None:
+    if track.velocity is not None:
+        body["velocity"] = {"eastMps": track.velocity[0], "northMps": track.velocity[1]}
+    elif track.course is not None and track.speed is not None:
         course = math.radians(track.course)
         body["velocity"] = {"eastMps": track.speed * math.sin(course), "northMps": track.speed * math.cos(course)}
     return json.dumps(body)

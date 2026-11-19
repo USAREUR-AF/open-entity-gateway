@@ -212,6 +212,9 @@ class Track:
     course: float | None  # degrees clockwise from true north
     speed: float | None  # metres per second
     source: Source
+    # metres per second east and north, when the source gave them as components;
+    # an adapter that writes components uses these rather than course and speed
+    velocity: tuple[float, float] | None = None
 
     @property
     def affiliation(self) -> str:
@@ -337,23 +340,27 @@ class Mapping:
         motion = document.get("motion")
         self.course_field: str | None = None
         self.speed_field: str | None = None
+        self.east_field: str | None = None
+        self.north_field: str | None = None
         if motion is not None:
             if (
                 not isinstance(motion, dict)
-                or set(motion) != {"course", "speed"}
-                or not all(isinstance(motion[k], str) and motion[k] for k in ("course", "speed"))
+                or not {"course", "speed"} <= set(motion) <= {"course", "speed", "east", "north"}
+                or ("east" in motion) != ("north" in motion)
+                or not all(isinstance(v, str) and v for v in motion.values())
             ):
                 raise MappingError(
                     f"{name}: motion: give course (degrees from true north) and speed (metres per second), "
-                    "each a field name"
+                    "and optionally east and north together (metres per second), each a field name"
                 )
             self.course_field, self.speed_field = motion["course"], motion["speed"]
+            self.east_field, self.north_field = motion.get("east"), motion.get("north")
 
         optional = document.get("optional", [])
         if not isinstance(optional, list) or not all(isinstance(f, str) and f for f in optional):
             raise MappingError(f"{name}: optional: a list of field names")
         allowed = set(self.position_fields[2:] if self.frame == "geodetic" else []) | {
-            f for f in (self.course_field, self.speed_field) if f
+            f for f in (self.course_field, self.speed_field, self.east_field, self.north_field) if f
         }
         if set(optional) - allowed:
             raise MappingError(
@@ -421,6 +428,12 @@ class Mapping:
         if speed is not None:
             if speed < 0:
                 raise RecordError(f"message field {self.speed_field!r} is a negative speed: {speed}")
+        velocity = None
+        if speed is not None and self.east_field and self.north_field:
+            east = self._number_or_none(record, self.east_field)
+            north = self._number_or_none(record, self.north_field)
+            if east is not None and north is not None:
+                velocity = (east, north)
 
         return Track(
             uid=uid,
@@ -433,6 +446,7 @@ class Mapping:
             name=self.track_name.resolve(record) if self.track_name else None,
             course=course,
             speed=speed,
+            velocity=velocity,
             source=Source(
                 subsystem=str(record.get("subsystem")),
                 message_type=str(record.get("message_type")),
