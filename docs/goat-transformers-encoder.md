@@ -24,18 +24,17 @@ The track is written as a Canonical Track v2 and converted by the copied Python 
 | CAT062 | SAC, SIC (the destination's) | `cat062.sac`, `cat062.sic` |
 | CAT062 | track number (the block's, or in order seen) | `cat062.track_number` |
 | CAT062 | confirmed | `track.confirmed` = 1 |
-| CAT062 | MRH, 1 when an altitude is sent | `cat062.mrh` |
 | CAT062 | SRC (the block's `altitude_source`) | `cat062.src` |
 | CAT062 | service identification (the destination's `service_id`, when given) | `cat062.service_id`, written as I062/015 |
 | SAPIENT | the object id (the gateway's ULID of node id and uid) | `sapient.detection_report_object_id` |
 | SAPIENT | the report `id` (the mapping's `name`) | `sapient.detection_report_id` |
 | SAPIENT | the class (the block's `classification`) | `track.class` |
 
-SIM comes from the block's `simulated`, as with the native encoder. For SAPIENT the pack writes a SapientMessage; the adapter keeps its DetectionReport, and the session (registration, status reports, the message timestamp, node id and report id) stays the gateway's.
+SIM comes from the block's `simulated`, as with the native encoder. MRH is the pack's: 1 when I062/130 is written (`derive cat062.mrh present hae`, goat-transformers#105, spec 0.12). For SAPIENT the pack writes a SapientMessage; the adapter keeps its DetectionReport, and the session (registration, status reports, the message timestamp, node id and report id) stays the gateway's.
 
 With `goat-transformers` the packs are loaded when the destination is built, so a pack that does not load stops the gateway at start. A destination key only the native encoder writes stops it at start too, rather than being dropped: `time_form` on CoT. The XML declaration a TCP stream puts before each event is written on both paths.
 
-goat-transformers is not on a package index, and the gateway installs only hash-locked packages, so the engine (standard library only) and the four model modules and four packs it needs are copied. `python tools/sync-goat-transformers.py <checkout>` copies them; `--check` checks them against `SHA256SUMS`, and against the checkout when one is given. The tests run the check. The copy is at goat-transformers `2d4c784dea0e3ef4552b80d6bf79754e9e3f3311`, which maps CoT `access` (goat-transformers#73), the I062/080 MRH and SRC bits (#72) and I062/015 (#71).
+goat-transformers is not on a package index, and the gateway installs only hash-locked packages, so the engine (standard library only) and the four model modules and four packs it needs are copied. `python tools/sync-goat-transformers.py <checkout>` copies them; `--check` checks them against `SHA256SUMS`, and against the checkout when one is given. The tests run the check. The copy is at goat-transformers `0bece65fb4eaee84328709b6139ce3bbefd60e3e`, which maps CoT `access` (goat-transformers#73), the I062/080 MRH and SRC bits (#72), I062/015 (#71), and derives MRH from the altitude (#105).
 
 ## What is equal and what differs
 

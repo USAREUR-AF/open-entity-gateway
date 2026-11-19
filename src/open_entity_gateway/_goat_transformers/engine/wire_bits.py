@@ -21,6 +21,14 @@ counted from the item's first bit. An item is `item <bits>` long, or longer when
 a nested group counted by a locator runs past that; the next item starts where
 it ends (ruling 4 of 0.7). A scope is read through a `View`: the message and
 the bit the scope starts at.
+
+Armor (Version 0.14): with `armor sixbit` the input and output are armored
+text, each character six bits, and the message is any number of bits. The
+fixed-layout input must reach every bit the selected scope needs, whatever
+`word_bytes` is; the output is the first `L` bits (the scope's furthest bit,
+an `optional` field counted only when it is written), zero-filled to a
+multiple of 6. A `sixbit` field's raw value is its six-bit values, first
+character first, each read as a six-bit field in the pack's bit order.
 """
 
 import re
@@ -44,6 +52,45 @@ def _hex_to_bytes(data, fmt):
     if len(cleaned) % 2 != 0:
         raise MalformedWire("hex input has an odd number of digits", format=fmt)
     return bytes.fromhex(cleaned)
+
+
+def _armor_values():
+    table = {}
+    for c in range(0x30, 0x58):
+        table[chr(c)] = c - 0x30
+    for c in range(0x60, 0x78):
+        table[chr(c)] = c - 0x38
+    return table
+
+
+_ARMOR = _armor_values()
+_ARMOR_CHAR = "".join(chr(0x30 + v) if v < 40 else chr(0x38 + v) for v in range(64))
+
+
+def armored_message(pack, data):
+    """Armored text -> Message (0.14): every character is checked before any
+    line is read; any character outside `0`-`W` and `` ` ``-`w`, white space
+    and line terminators included, is `malformed-wire`. The message is
+    `6 * <characters>` bits; the empty text is a message of no bits."""
+    table = _ARMOR
+    try:
+        bits = "".join(format(table[c], "06b") for c in data)
+    except KeyError:
+        for c in data:
+            if c not in table:
+                raise MalformedWire("armored input: character %r is not a six-bit character" % c, format=pack.name)
+        raise
+    return Message.from_bits(pack, int(bits, 2) if bits else 0, len(bits))
+
+
+def armored_text(acc, nbits):
+    """The first `nbits` bits of `acc` (msb first, `acc` holding exactly
+    `nbits` bits), followed by zero bits up to a multiple of 6, as armored
+    text (0.14)."""
+    fill = (-nbits) % 6
+    acc <<= fill
+    n = (nbits + fill) // 6
+    return "".join(_ARMOR_CHAR[(acc >> (6 * (n - 1 - k))) & 63] for k in range(n))
 
 
 def _start(pack, loc):
@@ -108,6 +155,15 @@ class Message:
         self.value = int.from_bytes(buf, "big" if self.msb else "little")
         self.msg = self
 
+    @classmethod
+    def from_bits(cls, pack, value, nbits):
+        """A message of `nbits` bits, `value` holding them in the pack's bit
+        order (armored text, 0.14: any number of bits)."""
+        msg = cls(pack, b"")
+        msg.value = value
+        msg.nbits = nbits
+        return msg
+
     def uint(self, start, length):
         """The `length` bits from bit `start` as an unsigned integer. The caller
         has checked that they lie within the input."""
@@ -127,6 +183,10 @@ class View:
 
 
 def parse(pack, data):
+    if pack.armor == "sixbit":
+        msg = armored_message(pack, data)
+        msg.nbytes = None
+        return msg
     buf = _hex_to_bytes(data, pack.name)
     msg = Message(pack, buf)
     msg.nbytes = len(buf)
@@ -199,6 +259,12 @@ def check_length(pack, msg, plan):
         end = _measure(pack, msg, plan, 0)
     else:
         end = _ends(pack, plan)[0]
+    if pack.armor == "sixbit":  # every needed bit, whatever word_bytes is (0.14)
+        if msg.nbits < end:
+            raise MalformedWire(
+                "message is %d bit(s); the format needs %d" % (msg.nbits, end), format=pack.name
+            )
+        return
     word_bits = pack.word_bytes * 8
     need = -(-end // word_bits) * pack.word_bytes
     if msg.nbytes < need:
@@ -221,6 +287,8 @@ def get(pack, view, field):
     if getattr(field.transform, "as_bytes", False):
         raw = bytes(msg.uint(start + 8 * k, 8) for k in range(length // 8))
         return raw[::-1] if field.swap else raw
+    if getattr(field.transform, "as_sixbit", False):
+        return sixbit_values(msg, start, length)
     raw = msg.uint(start, length)
     return _swap_int(raw, length) if field.swap else raw
 
@@ -228,10 +296,42 @@ def get(pack, view, field):
 def is_absent(pack, field, raw):
     """Whether the raw value of a field with `absent` is one of its sentinels
     (spec 0.9): the field's bits as an unsigned integer, after `swap`. An
-    `ascii` field's bytes are read back into that integer."""
+    `ascii` field's bytes, or a `sixbit` field's six-bit values (ruling 12 of
+    0.14), are read back into that integer."""
+    return raw_int(raw, pack.bit_order == "msb") in field.absent
+
+
+def raw_int(raw, msb):
+    """The field's bits as an unsigned integer, from a raw value that is an
+    integer, `ascii` bytes, or `sixbit` values (first character first: the
+    high six bits with `msb`, the low six bits with `lsb`)."""
     if isinstance(raw, (bytes, bytearray)):
-        raw = int.from_bytes(raw, "big" if pack.bit_order == "msb" else "little")
-    return raw in field.absent
+        return int.from_bytes(raw, "big" if msb else "little")
+    if isinstance(raw, (list, tuple)):
+        n = 0
+        seq = raw if msb else raw[::-1]
+        for c in seq:
+            n = (n << 6) | c
+        return n
+    return raw
+
+
+def sixbit_values(msg, start, length):
+    """The six-bit values of a `sixbit` field, first character first (0.14)."""
+    return [msg.uint(start + 6 * k, 6) for k in range(length // 6)]
+
+
+def count(pack, view, group):
+    """The number of items of `group` in the scope of `view`: the fixed count,
+    or the count read from the wire, before any item is laid out (ruling 7d of
+    0.11)."""
+    if group.count_loc is None:
+        return group.count_n
+    msg = view.msg
+    cs = view.base + _start(pack, group.count_loc)
+    if cs + group.count_loc[2] > msg.nbits:
+        raise _short(pack, "the count of group %s" % group.list)
+    return msg.uint(cs, group.count_loc[2])
 
 
 def items(pack, view, group):
@@ -249,12 +349,23 @@ def _emit(pack, enc, base, ops):
     stands; a field with a value, or a default, stands over a sentinel whatever
     their order (ruling 16 of 0.9); `when` and `const` values are written over
     any field (0.5 ruling 5), and a count over any field on its bits (ruling 2
-    of 0.7)."""
+    of 0.7).
+
+    Under `armor sixbit` the end is `L` of 0.14: an `optional` field counts
+    only when it is written (its key present, a `default`, or its first
+    sentinel: ruling 12 of 0.14)."""
     plan = enc.plan
     lines = plan.lines
     values = enc.values
     sentinels = enc.sentinels
-    end = base + _ends(pack, plan)[1]
+    if pack.armor == "sixbit":
+        end = base + _ends(pack, plan)[0]
+        for i in values:
+            ln = lines[i]
+            if ln.optional:
+                end = max(end, base + _start(pack, ln.loc) + ln.loc[2])
+    else:
+        end = base + _ends(pack, plan)[1]
     order = range(len(lines) - 1, -1, -1)  # later lines first, so earlier ones overwrite them
     if sentinels:
         order = [i for i in order if i in sentinels] + [i for i in order if i not in sentinels]
@@ -269,6 +380,9 @@ def _emit(pack, enc, base, ops):
                 v = v[::-1]
             for k, b in enumerate(v):
                 ops.append((start + 8 * k, 8, b))
+        elif isinstance(v, tuple):  # the six-bit values of a `sixbit` field
+            for k, c in enumerate(v):
+                ops.append((start + 6 * k, 6, c))
         else:
             v = int(v) & ((1 << ln.loc[2]) - 1)
             ops.append((start, ln.loc[2], _swap_int(v, ln.loc[2]) if ln.swap else v))
@@ -312,13 +426,20 @@ def write(pack, enc):
     lowercase hex."""
     ops = []
     end = _emit(pack, enc, 0, ops)
+    if pack.armor == "sixbit":
+        return armored_text(_lay_out(ops, end, True), end)
     word_bits = pack.word_bytes * 8
     nbytes = -(-end // word_bits) * pack.word_bytes
-    nbits = nbytes * 8
-    msb = pack.bit_order == "msb"
+    acc = _lay_out(ops, nbytes * 8, pack.bit_order == "msb")
+    return acc.to_bytes(nbytes, "big" if pack.bit_order == "msb" else "little").hex()
+
+
+def _lay_out(ops, nbits, msb):
+    """The `nbits` bits the writes give, as one integer in bit order; a later
+    write stands over an earlier one."""
     acc = 0
     for start, length, v in ops:
         shift = nbits - start - length if msb else start
         mask = (1 << length) - 1
         acc = (acc & ~(mask << shift)) | ((v & mask) << shift)
-    return acc.to_bytes(nbytes, "big" if msb else "little").hex()
+    return acc

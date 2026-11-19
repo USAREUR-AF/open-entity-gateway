@@ -15,7 +15,7 @@ attributes, `/>` for an empty element, no prolog, UTF-8.
 
 import re
 
-from .errors import MalformedWire, MissingRoot
+from .errors import MalformedWire, MissingRoot, TransformEncodeFailure
 from .packdef import parse_xml_locator
 
 _NAME_STOP = set(" \t\r\n/>=<\"'")
@@ -181,6 +181,8 @@ class _Reader:
                 seen_names.add(aname)
             if dup:
                 self.fail("duplicate attribute %r" % aname[:40])
+            if "\t" in raw or "\n" in raw:  # ruling 1i of 0.11 (XML 1.0, 3.3.3)
+                raw = raw.replace("\t", " ").replace("\n", " ")
             el.attrs.append((aname, self.unescape(raw) if "&" in raw else raw))
             i = m.end()
         m = _START_END.match(s, i)
@@ -230,7 +232,11 @@ class _Reader:
 
 def parse(pack, data):
     """-> the root element. The engine checks its name against the pack's
-    `root`, or picks the kinds whose `root` it is (0.6, a root per kind)."""
+    `root`, or picks the kinds whose `root` it is (0.6, a root per kind).
+    Each CR LF, and each CR alone, is read as LF before anything else (ruling
+    1h of 0.11)."""
+    if "\r" in data:
+        data = data.replace("\r\n", "\n").replace("\r", "\n")
     return _Reader(data, pack.name).document()
 
 
@@ -264,15 +270,15 @@ def _attr(el, name):
 
 def get(pack, root, field):
     """The wire text of one field, or None when it is absent: an attribute's
-    value, or an element's text when it is not blank."""
+    value, or an element's text, exactly as it stands; an element with no
+    character data has no text (ruling 1m of 0.11)."""
     path, kind, name = field.loc
     el = _find(root, path)
     if el is None:
         return None
     if kind == "attr":
         return _attr(el, name)
-    text = "".join(el.text)
-    return text if text.strip() != "" else None
+    return "".join(el.text) or None
 
 
 def is_absent(pack, field, raw):
@@ -303,8 +309,12 @@ def when_holds(pack, root, when):
         value = _attr(el, name)
         if value is None:
             return False
+    elif when.present:
+        return True  # the element exists (ruling 1m of 0.11)
     else:
         value = "".join(el.text)
+        if not value:
+            return False  # an element with no character data has no text
     return True if when.present else value == when.value
 
 
@@ -421,6 +431,18 @@ def write(pack, enc, residue=(), root_name=None):
     return "".join(out)
 
 
+# Ruling 1d of 0.11: the characters XML 1.0 cannot hold.
+_NOT_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
+def _check_chars(v, node):
+    m = _NOT_XML.search(v)
+    if m is not None:
+        raise TransformEncodeFailure(
+            "the character U+%04X cannot be written in XML" % ord(m.group()), locator=node.name
+        )
+
+
 def _esc_attr(v):
     return (
         v.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
@@ -435,12 +457,14 @@ def _esc_text(v):
 def _ser(node, out):
     out.append("<" + node.name)
     for k, v in node.attrs.items():
+        _check_chars(v, node)
         out.append(' %s="%s"' % (k, _esc_attr(v)))
     if not node.children and not node.text:
         out.append("/>")
         return
     out.append(">")
     if node.text:
+        _check_chars(node.text, node)
         out.append(_esc_text(node.text))
     for c in node.children:
         _ser(c, out)

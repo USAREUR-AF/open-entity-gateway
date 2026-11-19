@@ -21,24 +21,61 @@ class GTError(Exception):
         super().__init__(text)
 
 
-class UnknownDirective(GTError):
-    code = "unknown-directive"
-
-
-class UnknownTransform(GTError):
-    code = "unknown-transform"
-
-
 class InvalidPack(GTError):
-    """A pack.def that is syntactically or structurally wrong (arity, wire, locator, duplicates)."""
+    """The base of the load failures a pack text can have (0.11 ruling 5).
+    Never raised itself: each failure is raised as its kind below."""
 
-    code = "invalid-pack"
+    code = "bad-directive"
 
 
 class InvalidModel(GTError):
-    """A model module file that is syntactically or structurally wrong."""
+    """The base of the load failures a model module text can have. Never
+    raised itself."""
 
-    code = "invalid-model"
+    code = "bad-directive"
+
+
+class UnterminatedQuote(InvalidPack, InvalidModel):
+    code = "unterminated-quote"
+
+
+class UnknownDirective(InvalidPack, InvalidModel):
+    code = "unknown-directive"
+
+
+class UnknownTransform(InvalidPack):
+    code = "unknown-transform"
+
+
+class UnknownWire(InvalidPack):
+    code = "unknown-wire"
+
+
+class BadLocator(InvalidPack):
+    code = "bad-locator"
+
+
+class MissingFormat(InvalidPack):
+    code = "missing-format"
+
+
+class MissingVersion(InvalidPack, InvalidModel):
+    code = "missing-version"
+
+
+class MissingWire(InvalidPack):
+    code = "missing-wire"
+
+
+class MissingModule(InvalidModel):
+    code = "missing-module"
+
+
+class DuplicateFormat(InvalidPack):
+    """0.11 ruling 5: a pack whose `format` name is already loaded. The first
+    pack stays loaded."""
+
+    code = "duplicate-format"
 
 
 # Version 0.4 load checks (spec/engine-spec.md, "Loading"). The code is the
@@ -102,7 +139,7 @@ class DuplicateField(GTError):
     code = "duplicate-field"
 
 
-class BadDirective(GTError):
+class BadDirective(InvalidPack, InvalidModel):
     """A directive that is known but not allowed where or how it is written:
     `requires` before the first `kind`, `when` in a pack with no `kind`,
     `bit_order` off the bits wire, a bit length its transform does not allow, a

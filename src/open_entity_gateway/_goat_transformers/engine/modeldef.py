@@ -4,14 +4,19 @@ import math
 from dataclasses import dataclass, field as dc_field
 
 from .errors import (
-    BadDirective, DistributionRefused, DistributionViolation, DuplicateKey, DuplicateModule, InvalidModel,
-    MissingDistribution, MissingSource, UnknownDirective, UnknownModule,
+    BadDirective, DistributionRefused, DistributionViolation, DuplicateKey, DuplicateModule, MissingDistribution,
+    MissingModule, MissingSource, MissingVersion, UnknownDirective, UnknownModule, UnterminatedQuote,
 )
 from .packdef import CORE, DISTRIBUTIONS, split_key, tokenize
 from .transforms import parse_factor, read_typed
 
 KEY_TYPES = ("string", "float", "int")
 _SINGLE = ("module", "version", "distribution")
+# Ruling 5 of 0.11: the directives of a module and their number of arguments.
+_ARG_COUNTS = {
+    "module": (1, 1), "version": (1, 1), "distribution": (1, 1), "source": (1, 1), "uses": (1, 1),
+    "key": (3, 4), "list": (1, 2), "derive": (2, None),
+}
 
 
 @dataclass
@@ -84,7 +89,7 @@ def _parse_int(text):
 
 
 _NO_PARAM = ("copy", "hypot", "bearing", "east_of", "north_of", "neg", "day_seconds", "any", "not", "parse_int",
-             "text_of")
+             "text_of", "present")
 # 0.8: function -> (argument count or None for one or more, argument type, result type)
 _TYPED = {
     "day_seconds": (1, "int", "float"),
@@ -104,7 +109,7 @@ _TYPED_FN = {
 
 # function -> argument count, None for one or more
 _ARG_COUNT = {"copy": 1, "hypot": 2, "bearing": 2, "east_of": 2, "north_of": 2, "neg": 1, "day_seconds": 1,
-              "any": None, "not": 1, "parse_int": 1, "text_of": 1, "scale": 1, "offset": 1, "join": None}
+              "any": None, "not": 1, "parse_int": 1, "text_of": 1, "present": 1, "scale": 1, "offset": 1, "join": None}
 
 
 def _check_derive_text(function, n):
@@ -153,6 +158,12 @@ def _build_derive(function, target_type, arg_types):
         if target_type != result_type or any(t != arg_type for t in arg_types):
             raise ValueError("%s needs %s argument(s) and a %s target" % (name, arg_type, result_type))
         return _TYPED_FN[name]
+    if name == "present":  # 0.12: 1 when the argument, of any scalar type, is held by the entity
+        if n != 1:
+            raise ValueError("present takes 1 argument(s), got %d" % n)
+        if target_type != "int":
+            raise ValueError("present needs an int target")
+        return lambda a: 1
     if name == "copy":
         if n != 1:
             raise ValueError("copy takes 1 argument(s), got %d" % n)
@@ -248,8 +259,8 @@ def scan_uses(text):
         line = raw.lstrip()
         if line.startswith("uses") or line.startswith("module"):
             try:
-                toks = tokenize(raw, error=InvalidModel)
-            except InvalidModel:
+                toks = tokenize(raw)
+            except UnterminatedQuote:
                 continue
             if len(toks) == 2 and toks[0] == "uses" and toks[1] not in uses:
                 uses.append(toks[1])
@@ -278,76 +289,81 @@ def parse_model_text(text, *, source="model.def", core=None, models=None, max_di
     keys = {}
     lists = {}
     derives = []
+    later = []  # (lineno, error): the causes checked right after the file is read (ruling 5b of 0.11)
     for lineno, raw in enumerate(text.splitlines(), 1):
-        toks = tokenize(raw, source=source, lineno=lineno, error=InvalidModel)
+        # The line checks of ruling 5b of 0.11: quotes, directive, number of
+        # arguments, a repeated header line, the `distribution` value.
+        toks = tokenize(raw, source=source, lineno=lineno)
         if not toks:
             continue
         kw, args = toks[0], toks[1:]
         where = "%s:%d" % (source, lineno)
-        if kw in _SINGLE or kw == "source":
-            if len(args) != 1:
-                raise InvalidModel("directive %r takes 1 argument(s), got %d at %s" % (kw, len(args), where))
-            if kw == "source":
-                sources.append(args[0])
-            elif kw in seen:
-                raise InvalidModel("duplicate directive %r at %s" % (kw, where))
-            else:
-                seen[kw] = args[0]
+        if kw not in _ARG_COUNTS:
+            raise UnknownDirective("unknown directive %r at %s" % (kw, where))
+        lo, hi = _ARG_COUNTS[kw]
+        if len(args) < lo or (hi is not None and len(args) > hi):
+            want = "%d" % lo if lo == hi else "%d or more" % lo if hi is None else "%d or %d" % (lo, hi)
+            raise BadDirective("directive %r takes %s argument(s), got %d at %s" % (kw, want, len(args), where))
+        if kw in _SINGLE:
+            if kw in seen:
+                raise BadDirective("a second %r line at %s" % (kw, where))
+            if kw == "distribution" and args[0] not in DISTRIBUTIONS:
+                raise BadDirective(
+                    "unknown distribution %r (known: %s) at %s" % (args[0], ", ".join(DISTRIBUTIONS), where)
+                )
+            seen[kw] = args[0]
+        elif kw == "source":
+            sources.append(args[0])
         elif kw == "key":
-            if len(args) not in (3, 4):
-                raise InvalidModel("directive 'key' takes 3 or 4 argument(s), got %d at %s" % (len(args), where))
             kname, ktype, unit = args[0], args[1], args[2]
             if "." in kname:
-                raise InvalidModel("key name %r contains '.' at %s" % (kname, where))
+                later.append((lineno, BadDirective("key name %r contains '.' at %s" % (kname, where))))
+                continue
             if ktype not in KEY_TYPES:
-                raise InvalidModel(
+                later.append((lineno, BadDirective(
                     "key %r has unknown type %r (known: %s) at %s" % (kname, ktype, ", ".join(KEY_TYPES), where)
-                )
+                )))
+                continue
             if kname in keys or kname in lists:
-                raise DuplicateKey("key %r appears twice in the module, at %s" % (kname, where))
+                later.append((lineno, DuplicateKey("key %r appears twice in the module, at %s" % (kname, where))))
+                continue
             keys[kname] = Key(kname, ktype, None if unit == "-" else unit, args[3] if len(args) == 4 else None)
         elif kw == "list":
-            if len(args) not in (1, 2):
-                raise InvalidModel("directive 'list' takes 1 or 2 argument(s), got %d at %s" % (len(args), where))
             lname = args[0]
             if "." in lname:
-                raise InvalidModel("list name %r contains '.' at %s" % (lname, where))
+                later.append((lineno, BadDirective("list name %r contains '.' at %s" % (lname, where))))
+                continue
             if lname in keys or lname in lists:  # a list shares the key namespace of its module
-                raise DuplicateKey("name %r appears twice in the module, at %s" % (lname, where))
+                later.append((lineno, DuplicateKey("name %r appears twice in the module, at %s" % (lname, where))))
+                continue
             lists[lname] = args[1] if len(args) == 2 else None
         elif kw == "uses":
-            if len(args) != 1:
-                raise InvalidModel("directive 'uses' takes 1 argument(s), got %d at %s" % (len(args), where))
             if args[0] not in uses:
                 uses.append(args[0])
-        elif kw == "derive":
-            if len(args) < 2:
-                raise InvalidModel("directive 'derive' takes 2 or more argument(s), got %d at %s" % (len(args), where))
-            try:  # ruling 32 of 0.8: refused on its own text, a line error
+        else:  # derive
+            try:  # refused on its own text: right after the file (ruling 5b of 0.11, replacing ruling 32 of 0.8)
                 _check_derive_text(args[1], len(args) - 2)
             except ValueError as e:
-                raise BadDirective("derive %s %s at %s: %s" % (args[0], args[1], where, e))
+                later.append((lineno, BadDirective("derive %s %s at %s: %s" % (args[0], args[1], where, e))))
+                continue
             derives.append((lineno, args))
-        else:
-            raise UnknownDirective("unknown directive %r at %s" % (kw, where))
+
+    if later:
+        raise min(later, key=lambda item: item[0])[1]
 
     name = seen.get("module")
     module = Module(name=name, version=seen.get("version"), distribution=seen.get("distribution"), sources=sources,
                     keys=keys, lists=lists, uses=uses)
+    if not name:
+        raise MissingModule("the module has no 'module' line in %s" % source)
+    if "." in name:
+        raise BadDirective("module name %r contains '.'" % name)
+    if not module.version:
+        raise MissingVersion("the module has no 'version' line in %s (module %s)" % (source, name))
     if module.distribution is None:
         raise MissingDistribution("module %r has no 'distribution' line in %s" % (name, source))
     if not sources:
         raise MissingSource("module %r has no 'source' line in %s" % (name, source))
-    if not name:
-        raise InvalidModel("missing 'module' directive in %s" % source)
-    if "." in name:
-        raise InvalidModel("module name %r contains '.'" % name)
-    if not module.version:
-        raise InvalidModel("missing 'version' directive in %s (module %s)" % (source, name))
-    if module.distribution not in DISTRIBUTIONS:
-        raise InvalidModel(
-            "unknown distribution %r (known: %s) in module %s" % (module.distribution, ", ".join(DISTRIBUTIONS), name)
-        )
     if max_distribution is not None and (
         DISTRIBUTIONS.index(module.distribution) > DISTRIBUTIONS.index(max_distribution)
     ):
