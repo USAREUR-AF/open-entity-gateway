@@ -31,7 +31,7 @@ Five goat repositories turn data into tracks or move tracks between systems. Thi
 | 1 | open-entity-gateway | Accept Canonical Track v2 as input | built |
 | 2 | open-entity-gateway | Zenoh input on named key expressions | built |
 | 3 | goat-transformers | The gateway's example tracks as conformance vectors | built; the differences found are listed in goat-transformers#16 |
-| 4 | open-entity-gateway | A fabric destination: publish each encoded payload to a named key, for a pod to deliver | built ([adapters/fabric.md](../adapters/fabric.md)); measured through octo-pod's downlink bridge and egress arm for CoT and CAT062 over `udp://` (`tests/e2e/octo-pod-egress/`) |
+| 4 | open-entity-gateway | A fabric destination: publish each encoded payload to a named key, for a pod to deliver | built ([adapters/fabric.md](../adapters/fabric.md)); measured through octo-pod's downlink bridge and egress arms: CoT and CAT062 over `udp://`, SAPIENT over `sapient://` (`tests/e2e/octo-pod-egress/`) |
 | 5 | open-entity-gateway | Encode through goat-transformers with the same context keys open-billie's option uses, as an option off by default with a recorded baseline of differences, as open-billie does | built for CoT, CAT062 and SAPIENT ([goat-transformers-encoder.md](../goat-transformers-encoder.md)) |
 | 6 | octo-pod | A documented path: gateway publishes to a release key, a pod destination delivers it | written: octo-pod#35, in review |
 | 7 | first-bite, open-billie | Point receivers off the fabric to the right path: first-bite's to the gateway, open-billie's encoded keys to a pod | first-bite: first-bite#74; open-billie: its maintainers |
