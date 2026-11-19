@@ -1,6 +1,6 @@
 # Track egress through this gateway: withdrawn
 
-**Status: withdrawn** by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/pull/1084) (proposed).
+**Status: withdrawn** by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/blob/main/docs/adr/1255-vendor-systems-connect-through-one-vendor-bridges-repository-and-open-standards-go-through-goat-transformers.md) (accepted).
 
 This page once proposed that every track leaving the goat fabric pass through this gateway, which would encode it and publish
 it to a second key for an octo-pod to relay. That path is withdrawn. Tracks leave the fabric by one of three routes, each one
