@@ -1,5 +1,6 @@
 """decode / encode / convert over loaded packs (spec/engine-spec.md)."""
 
+import math
 import os
 
 from . import wire_bits, wire_geojson, wire_json, wire_protobuf, wire_seq, wire_text, wire_tlv, wire_xml
@@ -83,6 +84,20 @@ class _Enc:
         self.values = {}
         self.groups = {}
         self.sentinels = set()  # the indices in `values` that hold a sentinel (0.9), not a value
+
+
+def _check_unread_numbers(doc, read, fmt):
+    """Ruling 27 of 0.15: on `json` a number outside the double range that no
+    field line reads, anywhere in the document, is `malformed-wire`."""
+    stack = [doc]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+        elif isinstance(node, _Num) and id(node) not in read and math.isinf(float(node)):
+            raise MalformedWire("number %s is outside the double range" % (node[:40],), format=fmt)
 
 
 class Engine:
@@ -361,7 +376,12 @@ class Engine:
         """Run one field's transform over its raw wire value. Raises ValueError.
         Ruling 2c and 2d of 0.11: on `xml`, and on `geojson` when the member is
         a JSON string, `int` and `float` read integer and number text; a JSON
-        number is read by the JSON grammar."""
+        number is read by the JSON grammar.
+        On `json` and `geojson` a mapped number outside the double range fails
+        every transform but `iscale`, which reads it exactly (ruling 27 of
+        0.15)."""
+        if isinstance(raw, _Num) and not getattr(transform, "exact", False) and math.isinf(float(raw)):
+            raise ValueError("number %s is outside the double range" % (raw[:40],))
         if wire in ("bits", "protobuf", "text", "tlv"):
             return transform.decode(raw)
         if wire == "xml":
@@ -369,6 +389,8 @@ class Engine:
         if wire == "geojson":
             if not isinstance(raw, str):
                 raise ValueError("not a JSON scalar string or number")
+            if getattr(transform, "number_only", False) and not isinstance(raw, _Num):
+                raise ValueError("%s needs a JSON number" % transform.name)  # ruling 23 of 0.15
             if isinstance(raw, _Num) and hasattr(transform, "decode_json"):
                 return transform.decode_json(str(raw))
             return transform.decode(str(raw))
@@ -425,9 +447,12 @@ class Engine:
 
         failures = []  # (key, locator, reason) of every field that could not be decoded
         budget = [limit]  # the items this decode may still hold (ruling 7 of 0.11)
+        read = set() if wire == "json" else None
         keep_in_residue = self._decode_scope(
-            pack, wire, codec, plan, msg, ent.fields, ent.lists, failures, "", budget
+            pack, wire, codec, plan, msg, ent.fields, ent.lists, failures, "", budget, read
         )
+        if read is not None:
+            _check_unread_numbers(msg, read, fmt)
 
         mapped = plan.mapped - keep_in_residue if keep_in_residue else plan.mapped
         res = None
@@ -461,7 +486,7 @@ class Engine:
             )
         return ent
 
-    def _decode_scope(self, pack, wire, codec, plan, ctx, fields, lists, failures, prefix, budget):
+    def _decode_scope(self, pack, wire, codec, plan, ctx, fields, lists, failures, prefix, budget, read=None):
         """Decode one scope (the message, or one item of a group) from its wire
         context into `fields` and `lists`; the fields that could not be decoded
         are added to `failures`. -> the locators of `type` fields whose native
@@ -472,7 +497,11 @@ class Engine:
         (0.6, "One key at several locators"). That line's value table, if
         any, is then applied; a value with no entry fails the decode. A line
         whose transform fails is an error only when no line of its key
-        succeeds (0.6 ruling 5, ruling 10 of 0.7)."""
+        succeeds (0.6 ruling 5, ruling 10 of 0.7).
+
+        `read`, on `json`, collects the identity of every number a field line
+        reads, so that a number outside the double range that none reads is
+        found afterwards (ruling 27 of 0.15)."""
         settled = set()  # keys whose line has been chosen
         failed = None    # [(key, locator, reason, final)]
         keep_in_residue = None
@@ -481,8 +510,14 @@ class Engine:
         for f in plan.fields:
             key = f.key
             if key in settled:
+                if read is not None:
+                    raw = get(pack, ctx, f)
+                    if isinstance(raw, _Num):
+                        read.add(id(raw))
                 continue
             raw = get(pack, ctx, f)
+            if read is not None and isinstance(raw, _Num):
+                read.add(id(raw))
             if raw is None:
                 continue
             if f.absent is not None and codec.is_absent(pack, f, raw):
@@ -537,7 +572,7 @@ class Engine:
                 item = Item()
                 self._decode_scope(
                     pack, wire, codec, item_plan, item_ctx, item.fields, item.lists, failures,
-                    "%s%s[%d]." % (prefix, g.list, n), budget,
+                    "%s%s[%d]." % (prefix, g.list, n), budget, read,
                 )
                 out.append(item)
             lists[g.list] = out

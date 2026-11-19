@@ -11,6 +11,7 @@ from .errors import (
 from .transforms import (
     TRANSFORMS, JSON_TRANSFORMS, build_bits_transform, bits_len_allowed, format_float,
     PROTOBUF_TRANSFORMS, UnknownTransformName, check_transform_text, read_uint_text, transform_valid_on,
+    build_v15_text, v15_family,
 )
 from . import wire_text, wire_tlv
 
@@ -752,6 +753,8 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, def
             defer("field option 'swap' needs a bit length that is a multiple of 8, got %d" % loc[2])
         if "trim" in opts and tname not in ("ascii", "sixbit"):  # ruling 5 of 0.14
             defer("field option 'trim' applies to the 'ascii' and 'sixbit' transforms only")
+        if "swap" in opts and v15_family(tname) in ("chars", "octal"):  # 0.15
+            defer("field option 'swap' does not apply to the '%s' transform" % v15_family(tname))
     else:
         for opt in (("swap", "trim") if wire == "text" else ("swap", "trim", "optional")):
             if opt in opts:
@@ -774,6 +777,8 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, def
             transform = wire_text.build_transform(tname)
             if (loc[0] == "p") != transform.pair:
                 defer("transform %s %s" % (tname, "takes a pair <i>+<j>" if transform.pair else "does not take a pair"))
+        elif v15_family(tname) is not None:
+            transform = build_v15_text(tname)  # `scale`, `iscale` (0.15)
         else:
             transform = (JSON_TRANSFORMS if wire == "json" else TRANSFORMS)[tname]
 
@@ -1634,7 +1639,18 @@ def parse_pack_text(text, *, source="pack.def"):
             )
         pack.native_to_cot[native] = cot
         pack.cot_to_native[cot] = native
+    set_bit_order(pack)
     return pack
+
+
+def set_bit_order(pack):
+    """Give each transform that reads its field in the pack's bit order
+    (`chars`, 0.15) that order."""
+    msb = pack.bit_order == "msb"
+    for _, ref in pack.key_refs:
+        t = getattr(ref, "transform", None)
+        if getattr(t, "bit_ordered", False):
+            t.msb = msb
 
 
 def load_pack(directory):

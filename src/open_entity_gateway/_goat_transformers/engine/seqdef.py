@@ -10,7 +10,9 @@ kinds; one item, like one message, is the common lines plus one kind.
 from .errors import (
     BadDirective, BadLocator, DuplicateKind, MissingDistribution, MissingFormat, MissingSource, MissingVersion,
 )
-from .transforms import bits_len_allowed, build_bits_transform, read_int_text, read_uint_text, transform_valid_on
+from .transforms import (
+    bits_len_allowed, build_bits_transform, read_int_text, read_uint_text, transform_valid_on, v15_family,
+)
 
 (T_FIELD, T_CONST, T_PAD, T_ALIGN, T_WHEN, T_PRESENCE, T_IF, T_OPT, T_GROUP, T_CHAIN, T_LENGTH,
  T_WHOLE) = range(12)
@@ -179,7 +181,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
     `missing-distribution`, `missing-source`."""
     from .packdef import (
         BIT_ORDERS, HEADER_ONCE, NEEDS_WIRE, TEXT_DIRECTIVES, Default, Field, Pack, _check_transform, _Deferred,
-        _LineBad, armor_line, check_armor, line_head, parse_absent,
+        _LineBad, armor_line, check_armor, line_head, parse_absent, set_bit_order,
     )
 
     seen = {}          # the header values (`line_head`)
@@ -298,6 +300,9 @@ def parse_seq_pack_text(text, *, source="pack.def"):
         if "swap" in opts and tname == "sixbit":  # 0.14
             deferred.append((lineno, bad("field option 'swap' does not apply to the 'sixbit' transform",
                                          lineno, len_text)))
+        elif "swap" in opts and v15_family(tname) in ("chars", "octal"):  # 0.15
+            deferred.append((lineno, bad("field option 'swap' does not apply to the '%s' transform"
+                                         % v15_family(tname), lineno, len_text)))
         elif "swap" in opts and length % 8 != 0:
             deferred.append((lineno, bad(
                 "field option 'swap' needs a bit length that is a multiple of 8, got %d" % length, lineno, len_text
@@ -626,6 +631,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
     )
     pack.layout = "sequential"
     pack.seq = msg
+    set_bit_order(pack)
     for lineno, (native, cot) in typemap:
         if native in pack.native_to_cot or cot in pack.cot_to_native:
             raise BadDirective(

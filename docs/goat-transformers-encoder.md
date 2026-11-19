@@ -34,7 +34,7 @@ SIM comes from the block's `simulated`, as with the native encoder. MRH is the p
 
 With `goat-transformers` the packs are loaded when the destination is built, so a pack that does not load stops the gateway at start. A destination key only the native encoder writes stops it at start too, rather than being dropped: `time_form` on CoT. The XML declaration a TCP stream puts before each event is written on both paths.
 
-goat-transformers is not on a package index, and the gateway installs only hash-locked packages, so the engine (standard library only) and the four model modules and four packs it needs are copied. `python tools/sync-goat-transformers.py <checkout>` copies them; `--check` checks them against `SHA256SUMS`, and against the checkout when one is given. The tests run the check. The copy is at goat-transformers `0bece65fb4eaee84328709b6139ce3bbefd60e3e`, which maps CoT `access` (goat-transformers#73), the I062/080 MRH and SRC bits (#72), I062/015 (#71), and derives MRH from the altitude (#105).
+goat-transformers is not on a package index, and the gateway installs only hash-locked packages, so the engine (standard library only) and the four model modules and four packs it needs are copied. `python tools/sync-goat-transformers.py <checkout>` copies them; `--check` checks them against `SHA256SUMS`, and against the checkout when one is given. The tests run the check. The copy is at goat-transformers `6eeec009b098a6636752f4034d44c5ec0a9f13e8`, which maps CoT `access` (goat-transformers#73), the I062/080 MRH and SRC bits (#72), I062/015 (#71), derives MRH from the altitude (#105), and has the value transforms of spec 0.15 and core 0.2.0 (#113, #120).
 
 ## What is equal and what differs
 
