@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import ConfigError, available_adapters
+from .canonical_track import is_canonical_track, track_record
 from .gateway import REFUSED, Destination, Gateway, gateway_from_config, prepare_mappings
 from .inputs.replay import ReplayError, paced, read_records, shift_to
 from .mapping import MappingError, select
@@ -59,6 +60,13 @@ def _print(args: argparse.Namespace) -> int:
     mappings = prepare_mappings(args.mapping, [adapter])
     refused = 0
     for record in _records(args):
+        if is_canonical_track(record):
+            try:
+                record = track_record(record)
+            except RecordError as error:
+                print(f"open-entity-gateway: refused a Canonical Track v2: {error}", file=sys.stderr)
+                refused += 1
+                continue
         mapping = select(mappings, record)
         if mapping is None:
             continue
@@ -76,7 +84,7 @@ def _print(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="open-entity-gateway",
-        description="Publish first-bite records as tracks to the destinations a configuration lists.",
+        description="Publish records and Canonical Track v2 as tracks to the destinations a configuration lists.",
     )
     parser.add_argument("--verbose", action="store_true", help="log every track")
     commands = parser.add_subparsers(dest="command", required=True)

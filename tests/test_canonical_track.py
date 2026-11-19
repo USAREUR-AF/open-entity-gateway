@@ -60,7 +60,7 @@ def test_a_track_keeps_its_values() -> None:
         ({"trackId": ""}, "trackId"),
         ({"observedAt": "yesterday"}, "observedAt"),
         ({"position": {"latitudeDeg": "64", "longitudeDeg": -147.0}}, "position.latitudeDeg"),
-        ({"trackGeneration": True}, "trackGeneration"),
+        ({"trackGeneration": 3}, "trackGeneration"),
     ],
 )
 def test_a_track_missing_a_required_member_is_refused_by_name(change: dict[str, Any], member: str) -> None:
@@ -90,6 +90,15 @@ def test_asterix_from_a_track() -> None:
     item = asterix4py.AsterixParser(adapter.encode(track, record, m.parsed[adapter.name])).get_result()[1]
     assert item["cat"] == 62
     assert item["105"]["Lat"] == pytest.approx(64.8378, abs=LSB_DEGREES)
+    assert item["080"]["SIM"] == 1  # the example track is simulated test data
+
+
+def test_a_live_track_is_not_marked_simulated() -> None:
+    adapter = AsterixCat062({"name": "a", "adapter": "asterix-cat062", "print": True})
+    live = {**tracks()[0], "simulated": False, "testData": False}
+    track, m, record = mapped(adapter, live)
+    item = asterix4py.AsterixParser(adapter.encode(track, record, m.parsed[adapter.name])).get_result()[1]
+    assert item["080"].get("SIM", 0) == 0
 
 
 def test_sapient_from_a_track() -> None:
@@ -120,3 +129,11 @@ def test_optional_names_only_the_altitude_or_motion_fields() -> None:
     }
     with pytest.raises(MappingError, match="optional"):
         Mapping(document, "m")
+
+
+def test_print_writes_a_track(capsys: Any) -> None:
+    from open_entity_gateway.cli import main
+
+    assert main(["print", "--mapping", str(MAPPINGS), "--adapter", "cot", str(TRACKS)]) == 0
+    out = capsys.readouterr().out
+    assert 'uid="example-radar-1_T-0007"' in out and 'uid="example-radar-1_T-0008"' in out

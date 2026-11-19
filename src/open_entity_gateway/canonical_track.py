@@ -56,9 +56,7 @@ def track_record(track: dict[str, Any]) -> dict[str, Any]:
     position = track.get("position")
     if not isinstance(position, dict):
         raise RecordError("track member 'position' is missing")
-    generation = track.get("trackGeneration")
-    if isinstance(generation, bool) or not isinstance(generation, int):
-        raise RecordError(f"track member 'trackGeneration' is not a whole number: {generation!r}")
+    generation = _text(track.get("trackGeneration"), "trackGeneration")
     observed = _observed_ns(track.get("observedAt"))
 
     body: dict[str, Any] = {
@@ -82,6 +80,9 @@ def track_record(track: dict[str, Any]) -> dict[str, Any]:
     for member, key in (("confidence", "confidence"), ("simulated", "simulated"), ("testData", "test_data")):
         if track.get(member) is not None:
             body[key] = track[member]
+    # As the goat-transformers pack derives cat062.sim: simulated when any of
+    # the three flags that is present is true.
+    body["any_simulated"] = any(track.get(m) is True for m in ("simulated", "headerSimulated", "testData"))
 
     return {
         "subsystem": SUBSYSTEM,
