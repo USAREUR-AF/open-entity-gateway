@@ -3,12 +3,13 @@
 #
 #     tests/e2e/octo-pod-egress/run.sh <octo-pod checkout>
 #
-# Builds octo-pod's downlink-bridge and egress-arm (cargo), makes a throwaway CA
-# and leaf certificates (openssl), and runs run.py with the Python that has this
-# repository installed with the zenoh extra (OEG_PYTHON, default python3). Run
-# from the repository root, after tools/fetch-cot-xsd.py and
+# Builds octo-pod's downlink-bridge, egress-arm and sapient arm (cargo), makes
+# a throwaway CA and leaf certificates (openssl), and runs run.py with the Python
+# that has this repository installed with the zenoh extra (OEG_PYTHON, default
+# python3). Run from the repository root, after tools/fetch-cot-xsd.py and
 # tools/fetch-sapient-proto.py. Listens on 127.0.0.1 only: the router on 17447,
-# the receivers on 18610 to 18612. Everything it writes is removed on exit.
+# the receivers on 18610 to 18612 and the SAPIENT controller on 18620.
+# Everything it writes is removed on exit.
 set -euo pipefail
 
 POD="${1:?usage: $0 <octo-pod checkout>}"
@@ -18,6 +19,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 cargo build --release --quiet --manifest-path "$POD/arms/Cargo.toml" -p octo-egress \
   --bin egress-arm --bin downlink-bridge
+cargo build --release --quiet --manifest-path "$POD/arms/Cargo.toml" -p sapient --bin sapient
 
 mkdir -p "$WORK/tls"
 cd "$WORK/tls"
