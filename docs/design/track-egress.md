@@ -1,6 +1,6 @@
 # Track egress: how tracks leave the fabric
 
-**Status: designed; steps 1 to 4 built, step 5 built for CoT and CAT062.** The gateway accepts Canonical Track v2 (step 1), reads the fabric on named key expressions (step 2) and publishes encoded payloads to a fabric key for a pod to deliver (step 4); goat-transformers holds the gateway's example tracks as conformance vectors (step 3). The other steps are not built. Each step is its own pull request, and its tracking issue is linked at the end.
+**Status: designed; steps 1 to 4 built, step 5 built.** The gateway accepts Canonical Track v2 (step 1), reads the fabric on named key expressions (step 2) and publishes encoded payloads to a fabric key for a pod to deliver (step 4); goat-transformers holds the gateway's example tracks as conformance vectors (step 3). The other steps are not built. Each step is its own pull request, and its tracking issue is linked at the end.
 
 Five goat repositories turn data into tracks or move tracks between systems. This design gives each one a single job: producers publish tracks on the goat fabric (Zenoh); this gateway reads them, maps them and encodes each one once, through goat-transformers; and octo-pod's egress, which is built, carries the encoded payloads to receivers that cannot join the mesh.
 
@@ -32,7 +32,7 @@ Five goat repositories turn data into tracks or move tracks between systems. Thi
 | 2 | open-entity-gateway | Zenoh input on named key expressions | built |
 | 3 | goat-transformers | The gateway's example tracks as conformance vectors | built; the differences found are listed in goat-transformers#16 |
 | 4 | open-entity-gateway | A fabric destination: publish each encoded payload to a named key, for a pod to deliver | built ([adapters/fabric.md](../adapters/fabric.md)); not yet run through a pod |
-| 5 | open-entity-gateway | Encode through goat-transformers with the same context keys open-billie's option uses, as an option off by default with a recorded baseline of differences, as open-billie does | built for CoT and CAT062 ([goat-transformers-encoder.md](../goat-transformers-encoder.md)); SAPIENT not built |
+| 5 | open-entity-gateway | Encode through goat-transformers with the same context keys open-billie's option uses, as an option off by default with a recorded baseline of differences, as open-billie does | built for CoT, CAT062 and SAPIENT ([goat-transformers-encoder.md](../goat-transformers-encoder.md)) |
 | 6 | octo-pod | A documented path: gateway publishes to a release key, a pod destination delivers it | not built; depends on step 4 |
 | 7 | first-bite, open-billie | Point receivers off the fabric to the right path: first-bite's to the gateway, open-billie's encoded keys to a pod | first-bite: first-bite#74; open-billie: its maintainers |
 

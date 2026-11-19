@@ -17,6 +17,8 @@ from open_entity_gateway.record import RecordError
 
 from .conftest import MAPPINGS
 
+pytestmark = pytest.mark.usefixtures("each_encoder")
+
 
 def decode(payload: bytes) -> dict[str, Any]:
     result = asterix4py.AsterixParser(payload).get_result()
@@ -43,6 +45,9 @@ def test_fspec() -> None:
     assert fspec([1, 18]) == bytes([0b10000001, 0b00000001, 0b00010000])
 
 
+@pytest.mark.goat_differs(
+    "the asterix-cat062 pack does not map I062/015 (service_id is refused at start) and writes MRH and SRC as 0"
+)
 def test_weather_station_round_trip(ws_position: dict[str, Any]) -> None:
     payload, _ = encode_example(ws_position, sac=25, sic=4, service_id=3)
     assert payload[0] == 62 and int.from_bytes(payload[1:3], "big") == len(payload)
@@ -74,6 +79,7 @@ def test_harbour_buoy_round_trip_with_velocity_and_track_number(buoy_position: d
     assert item["080"]["SRC"] == 0
 
 
+@pytest.mark.goat_differs("the asterix-cat062 pack writes longitude 180 as 2^25, not -180", params={"lon": 180.0})
 @pytest.mark.parametrize(
     ("lat", "lon"),
     [(0.0, 0.0), (89.99999, 179.99999), (-90.0, -180.0), (51.4700, -0.4543), (-33.9461, 151.1772), (12.3, 180.0)],
@@ -99,6 +105,7 @@ def test_positions_round_trip(lat: float, lon: float) -> None:
     assert item["070"]["ToT"] == pytest.approx(86399.9921875)
 
 
+@pytest.mark.goat_differs("the asterix-cat062 pack writes any altitude the 16-bit field holds")
 def test_out_of_range_values_are_refused() -> None:
     m = Mapping(
         {

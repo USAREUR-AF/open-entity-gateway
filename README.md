@@ -25,7 +25,7 @@ Where this is heading, as the one way tracks leave the goat fabric for systems o
 
 Owners, licences, sources and dates for every row: [docs/interfaces.md](docs/interfaces.md). What each built adapter sends: [docs/adapters/](docs/adapters/); the fabric destination: [docs/adapters/fabric.md](docs/adapters/fabric.md). What an unbuilt vendor adapter would need, and companies with no published interface: [docs/vendors.md](docs/vendors.md). Controlled military data links are out of scope: Link 16, JREAP, VMF, ADatP-3, JC3IEDM.
 
-Each CoT and CAT062 destination can also encode through goat-transformers (`encoder: goat-transformers`, off by default; what differs: [docs/goat-transformers-encoder.md](docs/goat-transformers-encoder.md)).
+Each CoT, CAT062 and SAPIENT destination can also encode through goat-transformers (`encoder: goat-transformers`, off by default; what differs: [docs/goat-transformers-encoder.md](docs/goat-transformers-encoder.md)).
 
 Status words: **built** means the code exists and its unit tests pass; **measured** means a command ran against the named test target. Vendors are listed alphabetically and their presence is not an endorsement or a preference; integrations for other vendors are welcome.
 
