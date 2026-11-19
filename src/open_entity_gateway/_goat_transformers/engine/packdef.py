@@ -9,18 +9,19 @@ from .errors import (
     UnknownDirective, UnknownTransform,
 )
 from .transforms import (
-    TRANSFORMS, TEXT_TRANSFORM_NAMES, JSON_TRANSFORMS, build_bits_transform, bits_len_allowed,
+    TRANSFORMS, TEXT_TRANSFORM_NAMES, JSON_TRANSFORMS, build_bits_transform, bits_len_allowed, format_float,
     is_bits_transform_name, PROTOBUF_TRANSFORMS, is_protobuf_transform_name,
 )
+from . import wire_text
 
-WIRES = ("xml", "geojson", "json", "bits", "protobuf")
+WIRES = ("xml", "geojson", "json", "bits", "protobuf", "text")
 BIT_ORDERS = ("lsb", "msb")
 DISTRIBUTIONS = ("public", "controlled")  # public is below controlled
 CORE = "core"
 _ARITY = {
     "format": 1, "version": 1, "wire": 1, "root": 1, "word_bytes": 1, "typemap": 2, "layout": 1,
     "distribution": 1, "source": 1, "uses": 1,
-    "kind": 1, "when": 2, "bit_order": 1,
+    "kind": 1, "when": 2, "bit_order": 1, "delimiter": 1, "start": 1, "checksum": 1,
     "const": 2, "default": 2, "map": 3, "end": 0,
     # `field` takes three or more, `requires` one or more, `group` two or more
     "field": None, "requires": None, "group": None,
@@ -30,7 +31,9 @@ LAYOUTS = ("fixed", "sequential")
 # Lines of a sequential pack (0.8): each is `bad-directive` in a fixed-layout pack.
 _SEQ_ONLY = ("pad", "align", "presence", "if", "opt", "chain", "fx", "length", "also")
 _GROUP_LINES = ("field", "const", "default", "group", "end")
-FIELD_OPTIONS = ("via", "swap", "trim", "optional")
+FIELD_OPTIONS = ("via", "swap", "trim", "optional", "absent")
+_JSON_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
+TEXT_DIRECTIVES = ("delimiter", "start", "checksum")  # the `text` wire (0.10)
 
 
 @dataclass
@@ -47,6 +50,10 @@ class Field:
     key_type: str = None    # the key's declared type
     via_dec: dict = None    # canonical native text -> model value
     via_enc: dict = None    # canonical model text -> native text
+    # `absent <value>[,<value>...]` (0.9): the raw wire values that mean "no
+    # value", as the wire compares them, and the first as the wire writes it.
+    absent: frozenset = None
+    absent_out: object = None
 
     is_field = True
     is_const = False
@@ -229,6 +236,9 @@ class Pack:
     layout: str = "fixed"  # bits: "sequential" from 0.8
     seq: object = None     # a sequential pack: the seqdef.Body of the message
     tables: dict = dc_field(default_factory=dict)    # value tables: name -> [(native, model)] in line order
+    delimiter: str = ","   # text: the field delimiter, None for `delimiter none`
+    start: str = None      # text: the start text
+    checksum: str = "none" # text: `none` or `nmea`
     _plans: dict = dc_field(default_factory=dict, repr=False)
     _kind_index: dict = dc_field(default_factory=dict, repr=False)
     _kinds_by_root: dict = dc_field(default_factory=dict, repr=False)
@@ -449,6 +459,8 @@ def parse_locator(wire, locator):
         return parse_protobuf_locator(locator)
     if wire == "json":
         return parse_json_locator(locator)
+    if wire == "text":
+        return wire_text.parse_locator(locator)
     return parse_geojson_locator(locator)
 
 
@@ -471,15 +483,108 @@ def _parse_options(tokens, fmt, locator, where):
             raise BadDirective("unknown field option %r at %s" % (opt, where), format=fmt, locator=locator)
         if opt in out:
             raise BadDirective("field option %r is given twice at %s" % (opt, where), format=fmt, locator=locator)
-        if opt == "via":
+        if opt == "via" or opt == "absent":
+            # The token after `absent` is always its argument (ruling 11 of 0.9).
             if i + 1 >= len(tokens):
-                raise BadDirective("field option 'via' takes a table name at %s" % where, format=fmt, locator=locator)
+                raise BadDirective(
+                    "field option %r takes %s at %s" % (opt, "a table name" if opt == "via" else "a value", where),
+                    format=fmt, locator=locator,
+                )
             out[opt] = tokens[i + 1]
             i += 2
         else:
             out[opt] = True
             i += 1
     return out
+
+
+def parse_absent(wire, transform, length, text, fmt, locator, where, coord=False):
+    """`absent <value>[,<value>...]` (spec 0.9) -> (the sentinels as the wire
+    compares them, the first as the wire writes it). `length` is the field's
+    bit length on `bits`. The token `""` is the empty text. A value that does
+    not fit the raw value's width, or a sentinel on a `bits` field longer than
+    64 bits, is raised as a deferred `bad-directive`; every other error at
+    once."""
+
+    def bad(msg):
+        return BadDirective("field option 'absent' %s, at %s" % (msg, where), format=fmt, locator=locator)
+
+    values = text.split(",")
+    if len(values) > 1 and "" in values:
+        raise bad("has an empty value in its list %r" % text)
+    tname = transform.name
+    if wire == "bits" or (wire == "protobuf" and tname != "pstring"):
+        if wire == "bits":
+            if length > 64:
+                raise _Deferred(bad("is on a bits field of %d bits; a sentinel is at most 64 bits" % length))
+            width = length
+        else:
+            width = 32 if tname == "pfloat" else 64
+        ints = []
+        for v in values:
+            if not (v.isascii() and v.isdigit()):
+                raise bad("value %r is not an unsigned decimal integer" % v)
+            n = int(v)
+            if n >= (1 << width):
+                raise _Deferred(bad("value %d does not fit %d bit(s)" % (n, width)))
+            ints.append(n)
+        first = ints[0]
+        if wire == "protobuf":
+            if tname == "pdouble":
+                first = (transform.wire_type, first.to_bytes(8, "little"))
+            elif tname == "pfloat":
+                first = (transform.wire_type, first.to_bytes(4, "little"))
+            else:
+                first = (transform.wire_type, first)  # a varint, no zig-zag
+        return frozenset(ints), first
+    if wire == "protobuf":  # pstring: the text as written, `=` included (ruling 12)
+        raws = [v.encode("utf-8") for v in values]
+        return frozenset(raws), (transform.wire_type, raws[0])
+    texts = []
+    typed = []  # json, geojson: (text, "number" | "bool" | "string")
+    for v in values:
+        if v == "":  # the quoted empty token
+            texts.append("")
+            typed.append(("", "string"))
+            continue
+        forced = v[0] == "="
+        if forced:
+            v = v[1:]
+            if v == "":
+                raise bad("value '=' is empty after the '=' is stripped; only \"\" names the empty text")
+        if wire == "xml":
+            texts.append(v)
+            continue
+        if forced:
+            typed.append((v, "string"))
+        elif v == "null":
+            raise bad("value 'null' cannot be held by a transform (ruling 13 of 0.9)")
+        elif v == "true" or v == "false":
+            typed.append((v, "bool"))
+        elif _JSON_NUMBER.match(v):
+            try:
+                canon = format_float(float(v))
+            except (ValueError, OverflowError):
+                raise bad("value %r is number text that does not fit a finite double" % v)
+            typed.append((canon, "number"))
+        else:
+            typed.append((v, "string"))
+        texts.append(typed[-1][0])
+    if wire == "xml":
+        return frozenset(texts), texts[0]
+    if coord:  # ruling 25 of 0.9: a `geometry.*` slot holds a number
+        for t, how in typed:
+            if how != "number":
+                raise bad("value %r on a geojson coordinate is not number text" % t)
+    if tname == "bool":
+        for t, how in typed:
+            if how != "bool":
+                raise bad("value %r on the 'bool' transform is not true or false" % t)
+    from .wire_geojson import dump_string
+
+    t, how = typed[0]
+    out = dump_string(t) if how == "string" else t
+    return frozenset(texts), out
 
 
 def _item_locator(wire, name, locator, in_group, where):
@@ -508,6 +613,13 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, in_
     def misplaced(opt, why):
         return _Deferred(BadDirective(
             "field option %r %s at %s" % (opt, why, where), format=name, locator=locator
+        ))
+
+    if wire == "text":
+        return _resolve_text_field(name, key, locator, tname, opts, via, where, lineno, in_group, misplaced)
+    if wire_text.is_text_only_name(tname):
+        raise _Deferred(BadDirective(
+            "transform %r is valid on the text wire only, at %s" % (tname, where), format=name, locator=locator
         ))
 
     if wire == "bits":
@@ -550,7 +662,10 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, in_
             if tname != "ascii":
                 raise misplaced("trim", "applies to the 'ascii' transform only")
             transform.trim = True
-        return Field(key, locator, transform, loc, lineno, via=via, swap="swap" in opts, optional="optional" in opts)
+        return _with_absent(
+            Field(key, locator, transform, loc, lineno, via=via, swap="swap" in opts, optional="optional" in opts),
+            wire, opts, name, where,
+        )
 
     for opt in ("swap", "trim", "optional"):
         if opt in opts:
@@ -575,7 +690,7 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, in_
                 "bad protobuf locator at %s: %s" % (where, e),
                 format=name, locator=locator,
             )
-        return Field(key, locator, transform, loc, lineno, via=via)
+        return _with_absent(Field(key, locator, transform, loc, lineno, via=via), wire, opts, name, where)
 
     if is_bits_transform_name(tname) or is_protobuf_transform_name(tname) or (tname == "bool" and wire != "json"):
         raise InvalidPack(
@@ -598,7 +713,51 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, in_
         raise InvalidPack(
             "bad %s locator at %s: %s" % (wire, where, e), format=name, locator=locator
         )
-    return Field(key, locator, transform, loc, lineno, via=via)
+    return _with_absent(Field(key, locator, transform, loc, lineno, via=via), wire, opts, name, where)
+
+
+def _with_absent(f, wire, opts, fmt, where):
+    """Set the sentinels of the `absent` option on `f`, if it has one. -> f."""
+    text = opts.get("absent")
+    if text is not None:
+        length = f.loc[2] if wire == "bits" else None
+        coord = wire == "geojson" and len(f.loc) == 2 and f.loc[0] == "coord" and isinstance(f.loc[1], int)
+        f.absent, f.absent_out = parse_absent(wire, f.transform, length, text, fmt, f.locator, where, coord)
+    return f
+
+
+def _resolve_text_field(name, key, locator, tname, opts, via, where, lineno, in_group, misplaced):
+    """-> Field for one `field` line of a `text` pack (0.10)."""
+    if tname == "bool" or is_bits_transform_name(tname) or is_protobuf_transform_name(tname):
+        raise _Deferred(BadDirective(
+            "transform %r is not valid on the text wire, at %s" % (tname, where), format=name, locator=locator
+        ))
+    try:
+        transform = wire_text.build_transform(tname)
+    except ValueError as e:
+        raise BadDirective("%s, at %s" % (e, where), format=name, locator=locator)
+    if transform is None:
+        raise UnknownTransform("unknown transform %r at %s" % (tname, where), format=name, locator=locator)
+    try:
+        loc = wire_text.parse_locator(locator)
+    except ValueError as e:
+        raise BadDirective("bad text locator at %s: %s" % (where, e), format=name, locator=locator)
+    if loc[0] == "p" and loc[1] == loc[2]:
+        raise BadDirective("a pair whose two indexes are equal, at %s" % where, format=name, locator=locator)
+    for opt in ("swap", "trim"):
+        if opt in opts:
+            raise misplaced(opt, "applies to the bits wire only")
+    if "absent" in opts:
+        # 0.10 "Field options on `text`" names `via` and `optional` only, and
+        # 0.9 defines no raw value for the text wire: provisional reading.
+        raise misplaced("absent", "is not a field option of the text wire (0.10 allows 'via' and 'optional')")
+    if (loc[0] == "p") != transform.pair:
+        raise _Deferred(BadDirective(
+            "transform %s %s, at %s" % (
+                tname, "takes a pair <i>+<j>" if transform.pair else "does not take a pair", where),
+            format=name, locator=locator,
+        ))
+    return Field(key, locator, transform, loc, lineno, via=via, optional="optional" in opts)
 
 
 def _resolve_group(wire, name, list_name, locator, options, source, lineno, in_group):
@@ -619,6 +778,17 @@ def _resolve_group(wire, name, list_name, locator, options, source, lineno, in_g
             raise bad("a 'group' line is: group <list> <locator> [item <bits>] [count <locator | n>]; got %r" % opt)
         opts[opt] = options[i + 1]
         i += 2
+    if wire == "text":
+        if "count" in opts:
+            raise bad("'count' on a 'group' is bits only")
+        try:
+            loc = (wire_text._index(locator),)
+        except ValueError as e:
+            raise BadDirective("bad text group locator at %s: %s" % (where, e), format=name, locator=locator)
+        item = opts.get("item")
+        if item is None or not (item.isascii() and item.isdigit()) or int(item) < 1:
+            raise bad("a text group is: group <list> <i> item <n>, n from 1")
+        return Group(list_name, locator, loc, lineno, item_bits=int(item))
     if wire != "bits":
         for opt in ("count", "item"):
             if opt in opts:
@@ -707,7 +877,8 @@ def _resolve_when(wire, name, locator, value, source, lineno, directive="when", 
     try:
         loc = parse_json_locator(locator) if in_group and wire == "geojson" else parse_locator(wire, locator)
     except ValueError as e:
-        raise InvalidPack("bad %s locator at %s: %s" % (wire, where, e), format=name, locator=locator)
+        err = BadDirective if wire == "text" else InvalidPack  # ruling 14 of 0.10
+        raise err("bad %s locator at %s: %s" % (wire, where, e), format=name, locator=locator)
     if const and value == "present":
         raise BadDirective(
             "a 'const' value is written, so cannot be 'present' (text wires: '=present'), at %s" % where,
@@ -814,6 +985,32 @@ def _check_bits_groups(word_bytes, common, kinds, deferred, source, name):
     for k in kinds:  # a scope is common plus one kind
         if common_counted or has_counted(k.lines):
             scope(common + k.lines, None)
+
+
+def _text_directive(kw, value, seen, current, wire, wire_ok, fmt, lineno, where):
+    """`delimiter`, `start` and `checksum` (0.10): each at most once, before the
+    first `kind`, with a value of its form; on another wire `bad-directive`
+    after the file is read (ruling 10). Their relations to one another are
+    checked with the rest of the file (`wire_text.check_pack`)."""
+
+    def bad(msg):
+        return BadDirective("%s, at %s" % (msg, where), format=fmt, locator=kw)
+
+    if kw in seen:
+        raise bad("%r is given twice" % kw)
+    seen[kw] = (value, lineno)
+    if current is not None:
+        raise bad("%r after the first 'kind'" % kw)
+    if kw == "delimiter":
+        ok = value == "none" or (len(value) == 1 and "!" <= value <= "~" and value != '"')
+    elif kw == "start":
+        ok = value != "" and all("!" <= c <= "~" for c in value)
+    else:
+        ok = value in ("none", "nmea")
+    if not ok:
+        raise bad("%r does not take the value %r" % (kw, value))
+    if wire_ok and wire != "text":
+        raise _Deferred(bad("%r is a directive of the text wire" % kw))
 
 
 def _find_wire(text, directive="wire"):
@@ -947,6 +1144,7 @@ def parse_pack_text(text, *, source="pack.def"):
     field_memo = ({}, {})
     group_memo = ({}, {})
     group_refs = set()   # list names already in key_refs
+    text_dirs = {}       # text (0.10): `delimiter`, `start`, `checksum` -> (value, lineno)
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line:
@@ -1036,6 +1234,8 @@ def parse_pack_text(text, *, source="pack.def"):
                         raise _Deferred(
                             BadDirective("'bit_order' is bits only, at %s" % where, format=fmt, locator="bit_order")
                         )
+            elif kw in TEXT_DIRECTIVES:
+                _text_directive(kw, args[0], text_dirs, current, wire, wire_ok, fmt, lineno, where)
             elif kw == "root":
                 if current is None:
                     if root is not None:
@@ -1128,6 +1328,15 @@ def parse_pack_text(text, *, source="pack.def"):
         _check_bits_groups(seen.get("word_bytes"), common, kinds, deferred, source, name)
     elif group_refs and wire in ("xml", "json", "protobuf", "geojson"):
         _check_group_paths(wire, common, kinds, deferred, source, name)
+    text_values = {k: v for k, (v, _) in text_dirs.items()}
+    delimiter = text_values.get("delimiter", ",")
+    if delimiter == "none":
+        delimiter = None
+    if wire == "text":
+        wire_text.check_pack(
+            delimiter, text_values.get("start"), text_values.get("checksum", "none"), common, kinds,
+            {k: ln for k, (_, ln) in text_dirs.items()}, deferred, source, name,
+        )
     if first_when is not None and not kinds:
         deferred.append((first_when[0], BadDirective(
             "'when' in a pack with no 'kind' line, at %s:%d" % (source, first_when[0]),
@@ -1183,6 +1392,7 @@ def parse_pack_text(text, *, source="pack.def"):
         name=name, version=version, wire=wire, root=root, word_bytes=word_bytes,
         bit_order=seen.get("bit_order", "lsb"), common=common, kinds=kinds, key_refs=key_refs,
         distribution=distribution, sources=sources, uses=uses, defaults=defaults, tables=tables,
+        delimiter=delimiter, start=text_values.get("start"), checksum=text_values.get("checksum", "none"),
     )
     for lineno, (native, cot) in typemap:
         if native in pack.native_to_cot or cot in pack.cot_to_native:

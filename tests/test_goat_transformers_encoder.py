@@ -176,7 +176,7 @@ def test_an_unknown_encoder_is_refused() -> None:
 
 @pytest.mark.parametrize(
     ("adapter", "key", "value"),
-    [("cot", "access", "Undefined"), ("cot", "time_form", "z"), ("asterix-cat062", "service_id", 3)],
+    [("cot", "time_form", "z")],
 )
 def test_a_key_only_the_native_encoder_writes_is_refused(adapter: str, key: str, value: Any) -> None:
     from open_entity_gateway.adapter import ConfigError

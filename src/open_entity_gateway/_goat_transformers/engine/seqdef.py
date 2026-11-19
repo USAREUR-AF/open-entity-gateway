@@ -188,7 +188,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
     order `parse_pack_text` states: line errors as the file is read, then the
     whole-file `bad-directive` checks (the first in line order), then
     `missing-distribution`, `missing-source`."""
-    from .packdef import Default, Field, Pack, WIRES, BIT_ORDERS, DISTRIBUTIONS, tokenize
+    from .packdef import Default, Field, Pack, WIRES, BIT_ORDERS, DISTRIBUTIONS, _Deferred, parse_absent, tokenize
 
     seen = {}
     sources = []
@@ -262,13 +262,14 @@ def parse_seq_pack_text(text, *, source="pack.def"):
             opt = options[i]
             if opt == "optional":
                 raise bad("the field option 'optional' in a sequential pack", lineno, len_text)
-            if opt not in ("via", "swap", "trim"):
+            if opt not in ("via", "swap", "trim", "absent"):
                 raise bad("unknown field option %r" % opt, lineno, len_text)
             if opt in opts:
                 raise bad("field option %r is given twice" % opt, lineno, len_text)
-            if opt == "via":
+            if opt == "via" or opt == "absent":  # the token after `absent` is its argument (ruling 11 of 0.9)
                 if i + 1 >= len(options):
-                    raise bad("field option 'via' takes a table name", lineno, len_text)
+                    raise bad("field option %r takes %s" % (opt, "a table name" if opt == "via" else "a value"),
+                              lineno, len_text)
                 opts[opt] = options[i + 1]
                 i += 2
             else:
@@ -299,6 +300,11 @@ def parse_seq_pack_text(text, *, source="pack.def"):
             else:
                 transform.trim = True
         f = Field(key, len_text, transform, (0, 0, length), lineno, via=opts.get("via"), swap="swap" in opts)
+        if "absent" in opts:
+            try:
+                f.absent, f.absent_out = parse_absent("bits", transform, length, opts["absent"], fmt, len_text, where)
+            except _Deferred as d:
+                deferred.append((lineno, d.err))
         key_refs.append((key, f))
         if f.via is not None:
             via_fields.append(f)
@@ -410,7 +416,18 @@ def parse_seq_pack_text(text, *, source="pack.def"):
             if prev_field is None:  # ruling 13 of 0.8
                 raise bad("'also' is written directly after a 'field' line", lineno)
             nd, tname, options = prev_field
-            carried = [o for o in options if o in ("swap", "trim")]
+            # `swap`, `trim` and `absent` describe the bits, so the `also` key shares them.
+            carried = []
+            k = 0
+            while k < len(options):
+                if options[k] in ("via", "absent"):
+                    if options[k] == "absent":
+                        carried.extend(options[k:k + 2])
+                    k += 2
+                    continue
+                if options[k] in ("swap", "trim"):
+                    carried.append(options[k])
+                k += 1
             extra = args[1:]
             if extra and (len(extra) != 2 or extra[0] != "via"):
                 raise bad("an 'also' line is: also <key> [via <table>]", lineno)

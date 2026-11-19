@@ -225,6 +225,15 @@ def get(pack, view, field):
     return _swap_int(raw, length) if field.swap else raw
 
 
+def is_absent(pack, field, raw):
+    """Whether the raw value of a field with `absent` is one of its sentinels
+    (spec 0.9): the field's bits as an unsigned integer, after `swap`. An
+    `ascii` field's bytes are read back into that integer."""
+    if isinstance(raw, (bytes, bytearray)):
+        raw = int.from_bytes(raw, "big" if pack.bit_order == "msb" else "little")
+    return raw in field.absent
+
+
 def items(pack, view, group):
     """-> a view per item of `group`. On `bits` a list is always present, with
     `count` items."""
@@ -237,13 +246,19 @@ def _emit(pack, enc, base, ops):
     starts at bit `base`, in the order they are applied (a later write stands
     over an earlier one); -> the bit after the furthest bit the scope reaches.
     Where two written fields cover the same bits the earlier line's value
-    stands; `when` and `const` values are written over any field (0.5 ruling
-    5), and a count over any field on its bits (ruling 2 of 0.7)."""
+    stands; a field with a value, or a default, stands over a sentinel whatever
+    their order (ruling 16 of 0.9); `when` and `const` values are written over
+    any field (0.5 ruling 5), and a count over any field on its bits (ruling 2
+    of 0.7)."""
     plan = enc.plan
     lines = plan.lines
     values = enc.values
+    sentinels = enc.sentinels
     end = base + _ends(pack, plan)[1]
-    for i in range(len(lines) - 1, -1, -1):  # later lines first, so earlier ones overwrite them
+    order = range(len(lines) - 1, -1, -1)  # later lines first, so earlier ones overwrite them
+    if sentinels:
+        order = [i for i in order if i in sentinels] + [i for i in order if i not in sentinels]
+    for i in order:
         if i not in values:
             continue
         ln = lines[i]

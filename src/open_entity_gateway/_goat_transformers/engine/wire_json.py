@@ -13,7 +13,9 @@ dropped with everything inside it.
 """
 
 from .errors import MalformedWire
-from .wire_geojson import MISSING, Num, canonical_scalar, dump_string, parse_json, when_matches, when_text
+from .wire_geojson import (
+    MISSING, Num, canonical_scalar, dump_string, is_absent, parse_json, when_matches, when_text,  # noqa: F401
+)
 
 
 def parse(pack, data):
@@ -158,10 +160,14 @@ def resolve(pack, enc):
             continue
         resolved[ln.locator] = when_text(ln)
     values = enc.values
+    sentinels = enc.sentinels
     for i, ln in plan.ifields:
-        if i in values and ln.locator not in resolved:
+        if i in values and ln.locator not in resolved and i not in sentinels:
             out = values[i]
             resolved[ln.locator] = dump_string(out) if ln.transform.kind == "string" else out
+    for i, ln in plan.ifields:  # a sentinel where no field with a value writes (ruling 16 of 0.9)
+        if i in sentinels and ln.locator not in resolved:
+            resolved[ln.locator] = values[i]
     for i, g in plan.igroups:
         children = enc.groups.get(i)
         if children is not None and g.locator not in resolved:

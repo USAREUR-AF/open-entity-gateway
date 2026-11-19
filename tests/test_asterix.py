@@ -45,9 +45,6 @@ def test_fspec() -> None:
     assert fspec([1, 18]) == bytes([0b10000001, 0b00000001, 0b00010000])
 
 
-@pytest.mark.goat_differs(
-    "the asterix-cat062 pack does not map I062/015 (service_id is refused at start) and writes MRH and SRC as 0"
-)
 def test_weather_station_round_trip(ws_position: dict[str, Any]) -> None:
     payload, _ = encode_example(ws_position, sac=25, sic=4, service_id=3)
     assert payload[0] == 62 and int.from_bytes(payload[1:3], "big") == len(payload)

@@ -20,6 +20,7 @@ the engine names it `transform-decode` or `transform-encode`.
 import math
 import re
 import struct
+import sys
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -30,6 +31,10 @@ _ISO = re.compile(
 )
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _MS = timedelta(milliseconds=1)
+# The most digits an integer read from text may have: Python's limit on
+# converting a digit string to `int` (4300 by default), so `1e5000` and a
+# 5001-digit string fail alike.
+_INT_MAX_DIGITS = getattr(sys, "get_int_max_str_digits", lambda: 4300)() or 4300
 
 
 def format_float(value):
@@ -129,6 +134,12 @@ class IntT(Transform):
         # Tolerate an integral decimal such as "5.0" or "1e3".
         if _DECIMAL.match(t):
             d = Decimal(t)
+            # An exponent makes short text a huge integer (`2e47686170` has 47
+            # million digits): building it takes time and memory without bound
+            # (0.8, "Malformed input"). An integer of more digits than a digit
+            # string may hold here is out of range, as `int(t)` above finds it.
+            if d and d.adjusted() >= _INT_MAX_DIGITS:
+                raise ValueError("out of range: %r" % text[:40])
             if d == d.to_integral_value():
                 return int(d)
         raise ValueError("not an integer: %r" % text)

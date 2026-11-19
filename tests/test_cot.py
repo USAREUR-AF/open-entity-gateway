@@ -23,7 +23,6 @@ from open_entity_gateway.mapping import Mapping, load_mappings
 from .conftest import MAPPINGS, ROOT
 
 pytestmark = pytest.mark.usefixtures("each_encoder")
-ACCESS = "the cot-xml pack writes no access attribute, which the MITRE base-event schema requires"
 
 VECTORS = [json.loads(line) for line in (ROOT / "tests" / "vectors" / "cotify.jsonl").read_text().splitlines()]
 
@@ -48,7 +47,6 @@ def test_the_event_is_the_one_first_bite_writes(case: dict[str, Any]) -> None:
 VALID_TYPES = [c for c in VECTORS if "escaping" not in c["case"]]
 
 
-@pytest.mark.goat_differs(ACCESS)
 @pytest.mark.parametrize("case", VALID_TYPES, ids=[c["case"] for c in VALID_TYPES])
 def test_every_gateway_event_validates_against_the_mitre_schema(case: dict[str, Any], cot_schema: Any) -> None:
     secs, nanos = case["now"]
@@ -79,7 +77,6 @@ def test_without_access_the_published_schema_refuses_the_event(cot_schema: Any) 
         cot_schema.validate(VECTORS[0]["event"])
 
 
-@pytest.mark.goat_differs(ACCESS)
 def test_every_example_event_validates(
     cot_schema: Any, ws_records: list[dict[str, Any]], buoy_position: dict[str, Any]
 ) -> None:
@@ -119,7 +116,6 @@ def _gateway(spec: dict[str, Any]) -> Gateway:
     return gateway
 
 
-@pytest.mark.goat_differs(ACCESS)
 def test_udp_unicast(ws_records: list[dict[str, Any]], cot_schema: Any) -> None:
     listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     listener.bind(("127.0.0.1", 0))
@@ -137,7 +133,6 @@ def test_udp_unicast(ws_records: list[dict[str, Any]], cot_schema: Any) -> None:
     assert gateway.destinations[0].counts.sent == 1
 
 
-@pytest.mark.goat_differs(ACCESS)
 def test_udp_multicast(ws_position: dict[str, Any], cot_schema: Any) -> None:
     group = "239.2.3.1"
     listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -185,7 +180,6 @@ def _events(stream: bytes) -> list[str]:
     return [p + "</event>" for p in parts if p.strip()]
 
 
-@pytest.mark.goat_differs(ACCESS)
 def test_tcp_stream_has_a_declaration_before_each_event(ws_position: dict[str, Any], cot_schema: Any) -> None:
     server = socket.create_server(("127.0.0.1", 0))
     received: list[bytes] = []
@@ -264,7 +258,6 @@ def certificates(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return d
 
 
-@pytest.mark.goat_differs(ACCESS)
 def test_tls_with_a_client_certificate(ws_position: dict[str, Any], certificates: Path, cot_schema: Any) -> None:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certificates / "server.pem", certificates / "server.key")
@@ -363,7 +356,6 @@ def test_time_forms(ws_position: dict[str, Any], cot_schema: Any) -> None:
         CursorOnTarget({"name": "x", "adapter": "cot", "print": True, "time_form": "local"})
 
 
-@pytest.mark.goat_differs(ACCESS)
 def test_tcp_announces_the_gateway_first(ws_position: dict[str, Any], cot_schema: Any) -> None:
     server = socket.create_server(("127.0.0.1", 0))
     received: list[bytes] = []

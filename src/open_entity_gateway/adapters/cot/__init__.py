@@ -53,8 +53,8 @@ class CursorOnTarget(Adapter):
         self.printing = bool(destination.get("print"))
         from ...library import choose
 
-        # The cot-xml pack writes no access attribute and its times in one form.
-        self.encoder = choose(destination, self.label, native_only=("access", "time_form"))
+        # The cot-xml pack writes its times in one form.
+        self.encoder = choose(destination, self.label, native_only=("time_form",))
         self.access = destination.get("access", "Undefined")
         if self.access not in ACCESS_VALUES:
             raise ConfigError(f"destination {self.label!r}: access is one of {list(ACCESS_VALUES)}")
@@ -137,7 +137,8 @@ class CursorOnTarget(Adapter):
         if self.encoder == "goat-transformers":
             from ...library import cot
 
-            return cot(track)
+            # The declaration is the stream's framing, written on both paths.
+            return (XML_DECLARATION.encode() if self.declaration else b"") + cot(track, self.access)
         xml = event_xml(track, self.access, self.time_form)
         return ((XML_DECLARATION if self.declaration else "") + xml).encode("utf-8")
 
