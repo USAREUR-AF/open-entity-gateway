@@ -141,7 +141,7 @@ class Gateway:
             return SKIPPED
         try:
             track = mapping.track(record, received_ns=self.clock())
-            payloads = [d.adapter.encode(track, record, mapping.parsed.get(d.adapter.name)) for d in targets]
+            payloads = [d.adapter.encode(track, record, d.adapter.block_for(mapping)) for d in targets]
         except RecordError as error:
             log.warning("refused %s (%s): %s; nothing sent", mapping.topic, mapping.name, error)
             return REFUSED

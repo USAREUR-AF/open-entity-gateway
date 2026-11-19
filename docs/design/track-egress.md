@@ -1,6 +1,6 @@
 # Track egress: how tracks leave the fabric
 
-**Status: designed; steps 1 to 3 built.** The gateway accepts Canonical Track v2 (step 1) and reads the fabric on named key expressions (step 2), and goat-transformers holds the gateway's example tracks as conformance vectors (step 3). The other steps are not built. Each step is its own pull request, and its tracking issue is linked at the end.
+**Status: designed; steps 1 to 4 built.** The gateway accepts Canonical Track v2 (step 1), reads the fabric on named key expressions (step 2) and publishes encoded payloads to a fabric key for a pod to deliver (step 4); goat-transformers holds the gateway's example tracks as conformance vectors (step 3). The other steps are not built. Each step is its own pull request, and its tracking issue is linked at the end.
 
 Five goat repositories turn data into tracks or move tracks between systems. This design gives each one a single job: producers publish tracks on the goat fabric (Zenoh); this gateway reads them, maps them and encodes each one once, through goat-transformers; and octo-pod's egress, which is built, carries the encoded payloads to receivers that cannot join the mesh.
 
@@ -14,7 +14,7 @@ Five goat repositories turn data into tracks or move tracks between systems. Thi
 | [open-billie](https://github.com/USAREUR-AF/open-billie) | Producer that encodes at the node: CoT, ASTERIX CAT062 and SAPIENT on the fabric | Built. Its translator encodes natively or, as a built option off by default, through goat-transformers from Canonical Track v2 ([GOAT_TRANSFORMERS_ENCODER_OPTION.md](https://github.com/USAREUR-AF/open-billie/blob/main/docs/architecture/GOAT_TRANSFORMERS_ENCODER_OPTION.md)). Its encoded keys can go to an octo-pod egress destination without the gateway |
 | [octo-pod](https://github.com/USAREUR-AF/octo-pod) | Delivery to receivers that cannot join: `udp://`, `tcp://`, `tcp-server://` and `sapient://` egress destinations, each fed by the pod's downlink allow list | Built (0.4.0 and later). By its own design it converts no format: "the producer supplies the receiver's format before publishing it" ([design-egress-gateway.md](https://github.com/USAREUR-AF/octo-pod/blob/main/docs/design-egress-gateway.md)) |
 | [goat-transformers](https://github.com/USAREUR-AF/goat-transformers) | Encoding: one pack per format, seven engines that agree byte for byte | Built. Packs `cot-xml`, `sapient`, `asterix-cat062`, `canonical-track-v2` |
-| open-entity-gateway (this repository) | Mapping and encoding: records and tracks in, each format written once, to a destination it can reach or to a release key on the fabric | Inputs built; encoders are its own today; the fabric destination is not built |
+| open-entity-gateway (this repository) | Mapping and encoding: records and tracks in, each format written once, to a destination it can reach or to a release key on the fabric | Inputs and the fabric destination built; encoders are its own today |
 
 ## The design
 
@@ -31,7 +31,7 @@ Five goat repositories turn data into tracks or move tracks between systems. Thi
 | 1 | open-entity-gateway | Accept Canonical Track v2 as input | built |
 | 2 | open-entity-gateway | Zenoh input on named key expressions | built |
 | 3 | goat-transformers | The gateway's example tracks as conformance vectors | built; the differences found are listed in goat-transformers#16 |
-| 4 | open-entity-gateway | A fabric destination: publish each encoded payload to a named key, for a pod to deliver | not built |
+| 4 | open-entity-gateway | A fabric destination: publish each encoded payload to a named key, for a pod to deliver | built ([adapters/fabric.md](../adapters/fabric.md)); not yet run through a pod |
 | 5 | open-entity-gateway | Encode through goat-transformers with the same context keys open-billie's option uses; retire the gateway's own encoders one release later | not built; first settle the CAT062 MRH bit and compare SAPIENT field by field |
 | 6 | octo-pod | A documented path: gateway publishes to a release key, a pod destination delivers it | not built; depends on step 4 |
 | 7 | first-bite, open-billie | Point receivers off the fabric to the right path: first-bite's to the gateway, open-billie's encoded keys to a pod | first-bite: first-bite#74; open-billie: its maintainers |

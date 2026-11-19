@@ -292,12 +292,18 @@ class SapientEdgeNode(Adapter):
             detection.enu_velocity.north_rate = track.speed * math.cos(course)
         return detection
 
+    def message_for(self, detection: Any) -> Any:
+        """The SapientMessage that carries one detection report, with a new
+        report id: what is sent, and what the fabric destination publishes."""
+        message = self._message()
+        message.detection_report.CopyFrom(detection)
+        message.detection_report.report_id = new_ulid()
+        return message
+
     def describe(self, payload: Any) -> str:
         from google.protobuf.json_format import MessageToJson
 
-        message = self._message()
-        message.detection_report.CopyFrom(payload)
-        message.detection_report.report_id = new_ulid()
+        message = self.message_for(payload)
         return str(MessageToJson(message, indent=None, preserving_proto_field_name=True))
 
     # -- session ----------------------------------------------------------------

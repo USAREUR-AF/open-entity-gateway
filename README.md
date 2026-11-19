@@ -17,12 +17,13 @@ Where this is heading, as the one way tracks leave the goat fabric for systems o
 | Cursor-on-Target 2.0 (UDP, multicast, TCP, TLS) | open standard | built, measured | OpenTAKServer; MITRE schemas |
 | SAPIENT, BSI Flex 335 v2.0 | open standard | built, measured | Dstl Apex SAPIENT middleware 4.2.0 |
 | ASTERIX category 062 | open standard | built, measured | asterix4py decoder, field by field |
+| goat fabric (Zenoh), for an octo-pod to deliver | fabric destination | built, measured | two in-process Zenoh peers |
 | Anduril Lattice SDK | vendor adapter | built | the SDK with a local stub |
 | Picogrid ECN SDK | vendor adapter | built, measured | the SDK's offline mock |
 
 **Not built yet.** Open standards: STANAG 4676, OGC SensorThings, OARIS 2.0, C2SIM, NGVA. Vendor interfaces: Aaronia AARTOS, Auterion SDK, BAE Systems INTeACT, Palantir platform SDKs, Picogrid Legion, Rheinmetall TacticalAPI, Skydio Cloud API.
 
-Owners, licences, sources and dates for every row: [docs/interfaces.md](docs/interfaces.md). What each built adapter sends: [docs/adapters/](docs/adapters/). What an unbuilt vendor adapter would need, and companies with no published interface: [docs/vendors.md](docs/vendors.md). Controlled military data links are out of scope: Link 16, JREAP, VMF, ADatP-3, JC3IEDM.
+Owners, licences, sources and dates for every row: [docs/interfaces.md](docs/interfaces.md). What each built adapter sends: [docs/adapters/](docs/adapters/); the fabric destination: [docs/adapters/fabric.md](docs/adapters/fabric.md). What an unbuilt vendor adapter would need, and companies with no published interface: [docs/vendors.md](docs/vendors.md). Controlled military data links are out of scope: Link 16, JREAP, VMF, ADatP-3, JC3IEDM.
 
 Status words: **built** means the code exists and its unit tests pass; **measured** means a command ran against the named test target. Vendors are listed alphabetically and their presence is not an endorsement or a preference; integrations for other vendors are welcome.
 
