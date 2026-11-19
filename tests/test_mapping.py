@@ -140,7 +140,7 @@ def test_name_and_motion_are_gateway_keys(buoy_position: dict[str, Any]) -> None
 
 def test_mapping_files_load_and_select(ws_records: list[dict[str, Any]]) -> None:
     mappings = load_mappings([MAPPINGS], ["asterix", "sapient", "lattice", "picogrid_ecn"])
-    assert sorted(m.topic for m in mappings) == ["BUOY/Position", "WX/Position"]
+    assert sorted(m.topic for m in mappings) == ["BUOY/Position", "TRACK/Track", "WX/Position"]
     chosen = [select(mappings, r) for r in ws_records]
     assert [m.topic if m else None for m in chosen] == [None, None, None, "WX/Position", None]
 

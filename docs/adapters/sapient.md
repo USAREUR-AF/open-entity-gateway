@@ -44,6 +44,8 @@ For the weather-station Position record ([worked example](../mapping.md#worked-e
 
 ## Destination
 
+`encoder: goat-transformers` writes each DetectionReport with the goat-transformers pack `sapient`; the session stays the gateway's. [goat-transformers-encoder.md](../goat-transformers-encoder.md) says what differs.
+
 ```yaml
   - name: sapient-fusion
     adapter: sapient

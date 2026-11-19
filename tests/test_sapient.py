@@ -22,6 +22,8 @@ from open_entity_gateway.gateway import prepare_mappings
 
 from .conftest import MAPPINGS
 
+pytestmark = pytest.mark.usefixtures("each_encoder")
+
 gen = pytest.importorskip("open_entity_gateway.adapters.sapient._generated.sapient_msg.proto_options_pb2")
 from open_entity_gateway.adapters.sapient._generated.sapient_msg.bsi_flex_335_v2_0 import (  # noqa: E402
     sapient_message_pb2,
@@ -86,6 +88,9 @@ def test_status_reports_have_every_mandatory_field() -> None:
         assert missing_mandatory(node().status_report(new)) == []
 
 
+@pytest.mark.goat_differs(
+    "track_info is a list key, which conversion context cannot supply, so the sapient pack writes none"
+)
 def test_detection_report_for_each_example(ws_position: dict[str, Any], buoy_position: dict[str, Any]) -> None:
     a = SapientEdgeNode({"name": "s", "adapter": "sapient", "node_id": NODE, "address": "127.0.0.1:9"})
     mappings = prepare_mappings([MAPPINGS], [a])

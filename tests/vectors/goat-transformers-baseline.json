@@ -1,0 +1,660 @@
+[
+ {
+  "format": "cot",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "/event/@access",
+  "native": "Undefined",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "/event/@stale",
+  "native": "2025-06-15T15:09:40Z",
+  "library": "2025-06-15T15:09:40.000Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "/event/@start",
+  "native": "2025-06-15T15:06:40Z",
+  "library": "2025-06-15T15:06:40.000Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "/event/@time",
+  "native": "2025-06-15T15:06:40Z",
+  "library": "2025-06-15T15:06:40.000Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "/event/detail/contact",
+  "native": "",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "/event/detail/contact/@callsign",
+  "native": "Buoy/7",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "/event/@access",
+  "native": "Undefined",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "/event/@stale",
+  "native": "2025-06-15T15:16:43Z",
+  "library": "2025-06-15T15:16:43.000Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "/event/@start",
+  "native": "2025-06-15T15:06:43Z",
+  "library": "2025-06-15T15:06:43.000Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "/event/@time",
+  "native": "2025-06-15T15:06:43Z",
+  "library": "2025-06-15T15:06:43.000Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "/event/detail",
+  "native": "",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "/event/detail/contact",
+  "native": "",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "/event/detail/contact/@callsign",
+  "native": "KX7",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "/event/@access",
+  "native": "Undefined",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "/event/@stale",
+  "native": "2025-06-15T15:08:43.25Z",
+  "library": "2025-06-15T15:08:43.250Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "/event/@start",
+  "native": "2025-06-15T15:06:43.25Z",
+  "library": "2025-06-15T15:06:43.250Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "/event/@time",
+  "native": "2025-06-15T15:06:43.25Z",
+  "library": "2025-06-15T15:06:43.250Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "/event/detail/contact",
+  "native": "",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "/event/detail/contact/@callsign",
+  "native": "T-0007",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "/event/@access",
+  "native": "Undefined",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "/event/@stale",
+  "native": "2025-06-15T15:08:44Z",
+  "library": "2025-06-15T15:08:44.000Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "/event/@start",
+  "native": "2025-06-15T15:06:44Z",
+  "library": "2025-06-15T15:06:44.000Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "/event/@time",
+  "native": "2025-06-15T15:06:44Z",
+  "library": "2025-06-15T15:06:44.000Z"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "/event/detail",
+  "native": "",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "/event/detail/contact",
+  "native": "",
+  "library": "(absent)"
+ },
+ {
+  "format": "cot",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "/event/detail/contact/@callsign",
+  "native": "T-0008",
+  "library": "(absent)"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/AAC",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/ADS",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/AMA",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/CST",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/MD4",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/MD5",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/MDS",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/ME",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/MI",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/MRH",
+  "native": "1",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/PSR",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/SSR",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "I062/080/SUC",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/AAC",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/ADS",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/AMA",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/CST",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/MD4",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/MD5",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/MDS",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/ME",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/MI",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/MRH",
+  "native": "1",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/PSR",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/SRC",
+  "native": "1",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/SSR",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "I062/080/SUC",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/AAC",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/ADS",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/AMA",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/CST",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/MD4",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/MD5",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/MDS",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/ME",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/MI",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/MRH",
+  "native": "1",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/PSR",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/SSR",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "I062/080/SUC",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/AAC",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/ADS",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/AMA",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/CST",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/MD4",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/MD5",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/MDS",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/ME",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/MI",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/PSR",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/SSR",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "asterix-cat062",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "I062/080/SUC",
+  "native": "(absent)",
+  "library": "0"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "detection_report.track_info[0].type",
+  "native": "capture_time",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "detection_report.track_info[0].value",
+  "native": "2025-06-15T15:06:40Z",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "detection_report.track_info[1].type",
+  "native": "cot_type",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/records/harbour-buoy.records.jsonl:1",
+  "field": "detection_report.track_info[1].value",
+  "native": "a-f-S",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "detection_report.track_info[0].type",
+  "native": "capture_time",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "detection_report.track_info[0].value",
+  "native": "2025-06-15T15:06:43Z",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "detection_report.track_info[1].type",
+  "native": "cot_type",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/records/weather-station.records.jsonl:4",
+  "field": "detection_report.track_info[1].value",
+  "native": "a-f-G",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "detection_report.track_info[0].type",
+  "native": "capture_time",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "detection_report.track_info[0].value",
+  "native": "2025-06-15T15:06:43.25Z",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "detection_report.track_info[1].type",
+  "native": "cot_type",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/tracks/example.tracks.jsonl:1",
+  "field": "detection_report.track_info[1].value",
+  "native": "a-u-A-M-F-Q",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "detection_report.track_info[0].type",
+  "native": "capture_time",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "detection_report.track_info[0].value",
+  "native": "2025-06-15T15:06:44Z",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "detection_report.track_info[1].type",
+  "native": "cot_type",
+  "library": "(absent)"
+ },
+ {
+  "format": "sapient",
+  "input": "examples/tracks/example.tracks.jsonl:2",
+  "field": "detection_report.track_info[1].value",
+  "native": "a-u-A",
+  "library": "(absent)"
+ }
+]

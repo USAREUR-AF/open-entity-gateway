@@ -18,7 +18,7 @@ The `asterix-cat062` adapter writes each track as one ASTERIX data block holding
 | I062/105 position in WGS-84 | always | latitude and longitude, LSB 180/2²⁵ degree |
 | I062/185 velocity, Cartesian | when the mapping has `motion` | Vx east, Vy north, LSB 0.25 m/s |
 | I062/040 track number | always (mandatory) | `asterix.track_number`, or a number per uid in the order uids are first seen |
-| I062/080 track status | always (mandatory) | MON (monosensor), MRH (geometric) when an altitude is sent, SRC from `asterix.altitude_source`, SIM from `asterix.simulated` |
+| I062/080 track status | always (mandatory) | MON (monosensor), MRH (geometric) when an altitude is sent, SRC from `asterix.altitude_source`, SIM from `asterix.simulated`: `true`, `false`, or `{ field: f }`, a message field holding true or false |
 | I062/130 geometric altitude | when the mapping gives an altitude | metres above the ellipsoid in feet, LSB 6.25 ft |
 
 The name is not written: the specification's note to I062/245 says that item shall not be used. A value outside an item's range (an altitude above 150 000 ft, a speed beyond 8192 m/s, a track number above 65535) refuses the record.

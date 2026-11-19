@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import ConfigError, available_adapters
+from .canonical_track import is_canonical_track, track_record
 from .gateway import REFUSED, Destination, Gateway, gateway_from_config, prepare_mappings
 from .inputs.replay import ReplayError, paced, read_records, shift_to
 from .mapping import MappingError, select
@@ -59,12 +60,19 @@ def _print(args: argparse.Namespace) -> int:
     mappings = prepare_mappings(args.mapping, [adapter])
     refused = 0
     for record in _records(args):
+        if is_canonical_track(record):
+            try:
+                record = track_record(record)
+            except RecordError as error:
+                print(f"open-entity-gateway: refused a Canonical Track v2: {error}", file=sys.stderr)
+                refused += 1
+                continue
         mapping = select(mappings, record)
         if mapping is None:
             continue
         try:
             track = mapping.track(record)
-            payload = adapter.encode(track, record, mapping.parsed.get(adapter.name))
+            payload = adapter.encode(track, record, adapter.block_for(mapping))
         except RecordError as error:
             print(f"open-entity-gateway: refused {mapping.topic}: {error}", file=sys.stderr)
             refused += 1
@@ -76,7 +84,7 @@ def _print(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="open-entity-gateway",
-        description="Publish first-bite records as tracks to the destinations a configuration lists.",
+        description="Publish records and Canonical Track v2 as tracks to the destinations a configuration lists.",
     )
     parser.add_argument("--verbose", action="store_true", help="log every track")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -100,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
     zmq.add_argument("--connect", required=True, metavar="URL")
     zmq.add_argument("--topic", action="append", default=[], help="a topic prefix; may be repeated")
     zmq.add_argument("--encoding", choices=("json", "cbor"), default="json")
+    zen = with_config("zenoh", "subscribe to named key expressions on the goat fabric (needs the zenoh extra)")
+    zen.add_argument("--key", action="append", default=[], help="a key expression; may be repeated; at least one")
+    zen.add_argument("--zenoh-config", type=Path, help="a Zenoh configuration file: endpoints, TLS, credentials")
+    zen.add_argument("--connect", action="append", default=[], metavar="ENDPOINT", help="e.g. tls/router:7447")
+    zen.add_argument("--encoding", choices=("json", "cbor"), default="json")
     show = commands.add_parser("print", help="write the payloads an adapter would send; send nothing")
     show.add_argument("--mapping", action="append", type=Path, required=True, metavar="PATH")
     show.add_argument("--adapter", required=True)
@@ -124,6 +137,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "replay":
             return _run(gateway, _records(args))
+        if args.command == "zenoh":
+            from .inputs.zenoh_input import KeyExpressionError, check_keys
+            from .inputs.zenoh_input import records as fabric
+
+            try:
+                check_keys(args.key)
+            except KeyExpressionError as error:
+                print(f"open-entity-gateway: {error}", file=sys.stderr)
+                return 2
+            return _run(gateway, fabric(args.key, args.zenoh_config, args.connect, args.encoding))
         if args.command == "zmq":
             from .inputs.zeromq import records
 

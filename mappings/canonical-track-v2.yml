@@ -1,0 +1,34 @@
+# Canonical Track v2 (apiVersion billie.dev/track-v2, kind Track), as
+# src/open_entity_gateway/canonical_track.py turns it into a record.
+match:
+  subsystem: TRACK
+  message_type: Track
+  dictionary: canonical-track-v2
+
+uid: [source_id, track_id]
+# The classification words of the schema, as the goat-transformers pack
+# canonical-track-v2 maps them to CoT types (its table class-cot).
+type:
+  field: classification
+  values:
+    unknown: "a-u-X"
+    clutter: "a-u-X"
+    other: "a-u-X"
+    fixed-wing-aircraft: "a-u-A-M-F"
+    rotary-wing-aircraft: "a-u-A-M-H"
+    uas: "a-u-A-M-F-Q"
+    balloon: "a-u-A-M-L"
+    bird: "a-u-A"
+    vehicle: "a-u-G-E-V"
+  default: "a-u-X"
+position:
+  geodetic: [latitude, longitude, altitude]
+motion:
+  course: course     # from velocity east and north, degrees from true north
+  speed: speed       # metres per second
+optional: [altitude, course, speed]
+stale_minutes: 2
+time: capture        # the track's observedAt
+name: { field: track_id }
+asterix:
+  simulated: { field: any_simulated }   # SIM when simulated, headerSimulated or testData is true

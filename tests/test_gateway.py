@@ -22,6 +22,8 @@ from open_entity_gateway.record import RecordError, field_text
 
 from .conftest import MAPPINGS, RECORDS
 
+pytestmark = pytest.mark.usefixtures("each_encoder")
+
 
 class Recorder(Adapter):
     """A destination that keeps what it is sent. `needs` is a message field

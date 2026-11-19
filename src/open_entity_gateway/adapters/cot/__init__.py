@@ -27,6 +27,7 @@ _KEYS = {
     "access",
     "announce",
     "time_form",
+    "encoder",
     "print",
 }
 _ANNOUNCE_KEYS = {"uid", "callsign", "type", "group", "role", "point", "settle_seconds", "interval_seconds"}
@@ -50,6 +51,10 @@ class CursorOnTarget(Adapter):
         if unknown:
             raise ConfigError(f"destination {self.label!r}: unknown key {sorted(unknown)[0]!r}")
         self.printing = bool(destination.get("print"))
+        from ...library import choose
+
+        # The cot-xml pack writes no access attribute and its times in one form.
+        self.encoder = choose(destination, self.label, native_only=("access", "time_form"))
         self.access = destination.get("access", "Undefined")
         if self.access not in ACCESS_VALUES:
             raise ConfigError(f"destination {self.label!r}: access is one of {list(ACCESS_VALUES)}")
@@ -129,6 +134,10 @@ class CursorOnTarget(Adapter):
             raise RecordError(f"the CoT type {track.cot_type!r} does not have the form the CoT schema gives a type")
         if track.name is not None:
             _check_text("name", track.name)
+        if self.encoder == "goat-transformers":
+            from ...library import cot
+
+            return cot(track)
         xml = event_xml(track, self.access, self.time_form)
         return ((XML_DECLARATION if self.declaration else "") + xml).encode("utf-8")
 

@@ -28,12 +28,15 @@ from .record import (
     field_number,
     field_text,
     member_text,
+    message,
 )
 
 # first-bite cotify: DEFAULT_STALE_MINUTES.
 DEFAULT_STALE_MINUTES = 60
 TIME_SOURCES = ("capture", "received")
-CORE_KEYS = frozenset({"match", "uid", "type", "position", "stale_minutes", "form", "time", "name", "motion"})
+CORE_KEYS = frozenset(
+    {"match", "uid", "type", "position", "stale_minutes", "form", "time", "name", "motion", "optional"}
+)
 MATCH_KEYS = frozenset({"subsystem", "message_type", "dictionary"})
 
 # The affiliation and battle-dimension atoms of a CoT atom type `a-<affiliation>-<dimension>-…`
@@ -346,6 +349,19 @@ class Mapping:
                 )
             self.course_field, self.speed_field = motion["course"], motion["speed"]
 
+        optional = document.get("optional", [])
+        if not isinstance(optional, list) or not all(isinstance(f, str) and f for f in optional):
+            raise MappingError(f"{name}: optional: a list of field names")
+        allowed = set(self.position_fields[2:] if self.frame == "geodetic" else []) | {
+            f for f in (self.course_field, self.speed_field) if f
+        }
+        if set(optional) - allowed:
+            raise MappingError(
+                f"{name}: optional: {sorted(set(optional) - allowed)[0]!r} is not the altitude or a motion field; "
+                "only those may be absent"
+            )
+        self.optional: frozenset[str] = frozenset(optional)
+
         # -- the adapters' own blocks, checked by each adapter -------------------
         self.blocks: dict[str, Any] = {key: document[key] for key in block_names if key in document}
         self.parsed: dict[str, Any] = {}
@@ -357,6 +373,12 @@ class Mapping:
 
     def matches(self, record: dict[str, Any]) -> bool:
         return all(record.get(key) == wanted for key, wanted in self.match.items())
+
+    def _number_or_none(self, record: dict[str, Any], field: str) -> float | None:
+        """A field the mapping lists under `optional` may be absent or null."""
+        if field in self.optional and message(record).get(field) is None:
+            return None
+        return field_number(record, field)
 
     def track(self, record: dict[str, Any], received_ns: int | None = None) -> Track:
         """The track for `record`. Raises RecordError naming the field that
@@ -373,7 +395,7 @@ class Mapping:
         if self.frame == "geodetic":
             latitude = field_number(record, self.position_fields[0])
             longitude = field_number(record, self.position_fields[1])
-            hae = field_number(record, self.position_fields[2]) if len(self.position_fields) == 3 else None
+            hae = self._number_or_none(record, self.position_fields[2]) if len(self.position_fields) == 3 else None
         else:
             from .geodesy import ecef_to_geodetic
 
@@ -390,8 +412,13 @@ class Mapping:
 
         course = speed = None
         if self.course_field and self.speed_field:
-            course = field_number(record, self.course_field) % 360.0
-            speed = field_number(record, self.speed_field)
+            course_value = self._number_or_none(record, self.course_field)
+            speed = self._number_or_none(record, self.speed_field)
+            if course_value is None or speed is None:
+                course = speed = None
+            else:
+                course = course_value % 360.0
+        if speed is not None:
             if speed < 0:
                 raise RecordError(f"message field {self.speed_field!r} is a negative speed: {speed}")
 
