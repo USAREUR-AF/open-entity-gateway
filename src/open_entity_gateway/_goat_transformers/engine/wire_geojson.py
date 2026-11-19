@@ -362,7 +362,10 @@ def encode(pack, enc, residue, item_text):
     for i, ln in plan.ifields:
         if i in values and ln.locator not in resolved and i not in sentinels:
             out = values[i]
-            resolved[ln.locator] = Num(out) if ln.transform.kind == "number" else out
+            if getattr(ln.transform, "exact", False):  # `iscale`: its exact digits (ruling 7 of 0.15)
+                resolved[ln.locator] = RawJSON(out)
+            else:
+                resolved[ln.locator] = Num(out) if ln.transform.kind == "number" else out
     for i, ln in plan.ifields:  # a sentinel where no field with a value writes (ruling 16 of 0.9)
         if i in sentinels and ln.locator not in resolved:
             resolved[ln.locator] = RawJSON(values[i])

@@ -88,7 +88,7 @@ def residue(pack, doc, mapped):
                 walk(value, path + ".")
                 continue
             if path in mapped:
-                continue
+                continue  # a mapped member is read by its transform, not canonicalised here
             # A residue number whose nearest double is infinite has no
             # canonical text: `malformed-wire` (ruling 2d of 0.11).
             text = scalar_text(value, pack.name)
