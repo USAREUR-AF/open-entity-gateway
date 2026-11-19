@@ -51,9 +51,10 @@ class CursorOnTarget(Adapter):
         if unknown:
             raise ConfigError(f"destination {self.label!r}: unknown key {sorted(unknown)[0]!r}")
         self.printing = bool(destination.get("print"))
-        self.encoder = destination.get("encoder", "native")
-        if self.encoder not in ("native", "goat-transformers"):
-            raise ConfigError(f"destination {self.label!r}: encoder is native or goat-transformers")
+        from ...library import choose
+
+        # The cot-xml pack writes no access attribute and its times in one form.
+        self.encoder = choose(destination, self.label, native_only=("access", "time_form"))
         self.access = destination.get("access", "Undefined")
         if self.access not in ACCESS_VALUES:
             raise ConfigError(f"destination {self.label!r}: access is one of {list(ACCESS_VALUES)}")

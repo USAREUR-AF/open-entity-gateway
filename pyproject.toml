@@ -47,6 +47,7 @@ artifacts = ["src/open_entity_gateway/adapters/sapient/_generated/**"]
 testpaths = ["tests"]
 markers = [
   "e2e: runs against a server started for the test (TAK server, Apex); skipped unless its address is given",
+  "goat_differs(reason, params): fails on encoder goat-transformers for a recorded difference (tests/conftest.py, each_encoder)",
 ]
 
 [tool.ruff]

@@ -1,7 +1,8 @@
 """`encoder: goat-transformers` against the native encoders.
 
-Every example record and track is encoded both ways for CoT and ASTERIX
-CAT062, the outputs are parsed and compared field by field, and every field
+Every example record and track is encoded both ways for CoT, ASTERIX CAT062
+and SAPIENT (every DetectionReport field the generated bindings read), the
+outputs are parsed and compared field by field, and every field
 that differs is a row of tests/vectors/goat-transformers-baseline.json. The
 test fails when a row appears, disappears or changes. After a deliberate
 change, run it with OEG_COMPARE_UPDATE=1 and give each new row its cause in
@@ -67,6 +68,28 @@ def flat_cat062(payload: bytes) -> dict[str, str]:
     return fields
 
 
+def flat_message(message: Any, path: str = "detection_report") -> dict[str, str]:
+    """Every field of a protobuf message that is set or explicitly present."""
+    fields: dict[str, str] = {}
+    for descriptor, value in message.ListFields():
+        here = f"{path}.{descriptor.name}"
+        for index, item in enumerate(list(value) if descriptor.is_repeated else [value]):
+            key = f"{here}[{index}]" if descriptor.is_repeated else here
+            if descriptor.message_type is not None:
+                fields.update(flat_message(item, key))
+            elif descriptor.enum_type is not None:
+                fields[key] = descriptor.enum_type.values_by_number[item].name
+            else:
+                fields[key] = str(item)
+    return fields
+
+
+def sapient_node(encoder: str) -> Any:
+    from open_entity_gateway.adapters.sapient import SapientEdgeNode
+
+    return SapientEdgeNode({"name": "s", "adapter": "sapient", "print": True, "encoder": encoder})
+
+
 def same(a: str | None, b: str | None) -> bool:
     if a == b:
         return True
@@ -76,9 +99,9 @@ def same(a: str | None, b: str | None) -> bool:
         return False
 
 
-def differences() -> list[dict[str, str]]:
+def differences(sapient: bool = False) -> list[dict[str, str]]:
     rows = []
-    for fmt, make, flat in (
+    formats: list[tuple[str, Any, Any]] = [
         ("cot", lambda enc: CursorOnTarget({"name": "c", "adapter": "cot", "print": True, "encoder": enc}), flat_xml),
         (
             "asterix-cat062",
@@ -87,7 +110,10 @@ def differences() -> list[dict[str, str]]:
             ),
             flat_cat062,
         ),
-    ):
+    ]
+    if sapient:
+        formats = [("sapient", sapient_node, flat_message)]
+    for fmt, make, flat in formats:
         for name, record in inputs():
             outputs = []
             for encoder in ("native", "goat-transformers"):
@@ -115,11 +141,23 @@ def differences() -> list[dict[str, str]]:
     return rows
 
 
+def recorded(sapient: bool) -> list[dict[str, str]]:
+    return [row for row in json.loads(BASELINE.read_text()) if (row["format"] == "sapient") == sapient]
+
+
 def test_the_differences_are_the_recorded_baseline() -> None:
     rows = differences()
     if os.environ.get("OEG_COMPARE_UPDATE"):
-        BASELINE.write_text(json.dumps(rows, indent=1) + "\n")
-    assert rows == json.loads(BASELINE.read_text())
+        BASELINE.write_text(json.dumps(rows + recorded(sapient=True), indent=1) + "\n")
+    assert rows == recorded(sapient=False)
+
+
+def test_the_sapient_differences_are_the_recorded_baseline() -> None:
+    pytest.importorskip("open_entity_gateway.adapters.sapient._generated.sapient_msg.proto_options_pb2")
+    rows = differences(sapient=True)
+    if os.environ.get("OEG_COMPARE_UPDATE"):
+        BASELINE.write_text(json.dumps(recorded(sapient=False) + rows, indent=1) + "\n")
+    assert rows == recorded(sapient=True)
 
 
 def test_the_copied_engine_matches_its_sums() -> None:
@@ -134,3 +172,42 @@ def test_an_unknown_encoder_is_refused() -> None:
 
     with pytest.raises(ConfigError, match="encoder"):
         CursorOnTarget({"name": "c", "adapter": "cot", "print": True, "encoder": "other"})
+
+
+@pytest.mark.parametrize(
+    ("adapter", "key", "value"),
+    [("cot", "access", "Undefined"), ("cot", "time_form", "z"), ("asterix-cat062", "service_id", 3)],
+)
+def test_a_key_only_the_native_encoder_writes_is_refused(adapter: str, key: str, value: Any) -> None:
+    from open_entity_gateway.adapter import ConfigError
+
+    cls = CursorOnTarget if adapter == "cot" else AsterixCat062
+    with pytest.raises(ConfigError, match=f"{key} is written only by the native encoder"):
+        cls({"name": "x", "adapter": adapter, "print": True, "encoder": "goat-transformers", key: value})
+
+
+def test_a_pack_that_does_not_load_stops_the_destination_at_start(tmp_path: Any, monkeypatch: Any) -> None:
+    import shutil
+
+    from open_entity_gateway import library
+    from open_entity_gateway.adapter import ConfigError
+
+    data = tmp_path / "data"
+    shutil.copytree(library.DATA, data)
+    (data / "packs" / "cot-xml" / "pack.def").write_text("format cot-xml\nnot-a-directive\n")
+    monkeypatch.setattr(library, "DATA", data)
+    monkeypatch.setattr(library, "_engine", None)
+    with pytest.raises(ConfigError, match="packs did not load"):
+        CursorOnTarget({"name": "c", "adapter": "cot", "print": True, "encoder": "goat-transformers"})
+
+
+def test_a_sapient_detection_from_the_library_keeps_the_gateway_identity(buoy_position: dict[str, Any]) -> None:
+    pytest.importorskip("open_entity_gateway.adapters.sapient._generated.sapient_msg.proto_options_pb2")
+    from open_entity_gateway.adapters.sapient import object_ulid
+
+    node = sapient_node("goat-transformers")
+    (m,) = [m for m in prepare_mappings([MAPPINGS], [node]) if m.matches(buoy_position)]
+    detection = node.encode(m.track(buoy_position), buoy_position, node.block_for(m))
+    assert detection.object_id == object_ulid(node.node_id, "7")
+    assert (detection.id, detection.classification[0].type) == ("Buoy/7", "Buoy")
+    assert not detection.HasField("report_id")  # the session sets it when sending

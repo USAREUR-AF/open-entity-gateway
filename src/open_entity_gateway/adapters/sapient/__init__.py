@@ -9,6 +9,10 @@ middleware reads. See docs/adapters/sapient.md.
 
 The bindings are generated from Dstl's proto files (Apache-2.0) by
 tools/fetch-sapient-proto.py.
+
+With `encoder: goat-transformers` each DetectionReport is written by the
+goat-transformers pack `sapient` (docs/goat-transformers-encoder.md); the
+session, the message timestamp, node id and report id stay the gateway's.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from typing import Any
 
 from ...adapter import Adapter, ConfigError, DeliveryError
 from ...mapping import Mapping, MappingError, Track, Value
-from ...record import rfc3339_z
+from ...record import RecordError, rfc3339_z
 from ...transport import Stream
 
 log = logging.getLogger("open_entity_gateway")
@@ -62,6 +66,7 @@ _KEYS = {
     "detection_spacing_ms",
     "registration_timeout_seconds",
     "print",
+    "encoder",
 }
 _BLOCK_KEYS = {"classification"}
 # A documentation UUID for `print`, which sends nothing.
@@ -161,6 +166,9 @@ class SapientEdgeNode(Adapter):
         self.spacing = float(destination.get("detection_spacing_ms", 100)) / 1000
         self.ack_timeout = float(destination.get("registration_timeout_seconds", 10))
         self.b = _bindings()
+        from ...library import choose
+
+        self.encoder = choose(destination, self.label)
         self.stream = None if self.printing else Stream(destination, self.label)
         self.classes: set[str] = set()
         self.with_velocity = False
@@ -267,6 +275,17 @@ class SapientEdgeNode(Adapter):
         return message
 
     def encode(self, track: Track, record: dict[str, Any], block: Block | None) -> Any:
+        if self.encoder == "goat-transformers":
+            from ...library import sapient
+
+            classification = (
+                block.classification.resolve(record) if block is not None and block.classification is not None else None
+            )
+            written = sapient(track, object_ulid(self.node_id, track.uid), track.name, classification)
+            message = self.b.message.SapientMessage.FromString(written)
+            if message.WhichOneof("content") != "detection_report":
+                raise RecordError(f"goat-transformers wrote a SAPIENT {message.WhichOneof('content')}, not a detection")
+            return message.detection_report
         detection = self.b.detection.DetectionReport()
         detection.object_id = object_ulid(self.node_id, track.uid)
         location = detection.location

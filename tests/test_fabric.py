@@ -19,6 +19,8 @@ from open_entity_gateway.gateway import SENT, Destination, Gateway, prepare_mapp
 from .conftest import MAPPINGS, ROOT
 from .test_zenoh_input import free_port, peer
 
+pytestmark = pytest.mark.usefixtures("each_encoder")
+
 TRACK = json.loads((ROOT / "examples" / "tracks" / "example.tracks.jsonl").read_text().splitlines()[0])
 
 

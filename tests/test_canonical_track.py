@@ -19,6 +19,8 @@ from open_entity_gateway.record import RecordError
 
 from .conftest import MAPPINGS, ROOT
 
+pytestmark = pytest.mark.usefixtures("each_encoder")
+
 TRACKS = ROOT / "examples" / "tracks" / "example.tracks.jsonl"
 
 

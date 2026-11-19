@@ -106,9 +106,10 @@ class AsterixCat062(Adapter):
         if unknown:
             raise ConfigError(f"destination {self.label!r}: unknown key {sorted(unknown)[0]!r}")
         self.printing = bool(destination.get("print"))
-        self.encoder = destination.get("encoder", "native")
-        if self.encoder not in ("native", "goat-transformers"):
-            raise ConfigError(f"destination {self.label!r}: encoder is native or goat-transformers")
+        from ...library import choose
+
+        # The asterix-cat062 pack does not map I062/015.
+        self.encoder = choose(destination, self.label, native_only=("service_id",))
         self.sac = _byte(destination, "sac", self.label, not self.printing) or 0
         self.sic = _byte(destination, "sic", self.label, not self.printing) or 0
         self.service_id = _byte(destination, "service_id", self.label, False)
