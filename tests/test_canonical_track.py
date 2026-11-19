@@ -138,3 +138,27 @@ def test_print_writes_a_track(capsys: Any) -> None:
     assert main(["print", "--mapping", str(MAPPINGS), "--adapter", "cot", str(TRACKS)]) == 0
     out = capsys.readouterr().out
     assert 'uid="example-radar-1_T-0007"' in out and 'uid="example-radar-1_T-0008"' in out
+
+
+def test_shift_to_now_moves_observed_at_and_keeps_the_gaps() -> None:
+    from open_entity_gateway.canonical_track import observed_ns
+    from open_entity_gateway.inputs.replay import read_records, rfc3339, shift_to
+
+    with TRACKS.open() as stream:
+        tracks = list(read_records(stream))
+    start = 2_000_000_000 * 10**9 + 125_000_000
+    moved = list(shift_to(iter(tracks), start))
+    assert moved[0]["observedAt"] == "2033-05-18T03:33:20.125Z"
+    gaps = [observed_ns(t["observedAt"]) - observed_ns(tracks[0]["observedAt"]) for t in tracks]
+    assert [observed_ns(t["observedAt"]) - start for t in moved] == gaps
+    assert {k: v for k, v in moved[0].items() if k != "observedAt"} == {
+        k: v for k, v in tracks[0].items() if k != "observedAt"
+    }
+    assert rfc3339(start + 7) == "2033-05-18T03:33:20.125000007Z"
+
+
+def test_shift_to_now_passes_an_unreadable_observed_at_on_unchanged() -> None:
+    from open_entity_gateway.inputs.replay import shift_to
+
+    track = {"apiVersion": "billie.dev/track-v2", "kind": "Track", "observedAt": "yesterday"}
+    assert list(shift_to(iter([track]), 10**18)) == [track]
