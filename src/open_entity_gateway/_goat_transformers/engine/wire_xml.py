@@ -275,6 +275,12 @@ def get(pack, root, field):
     return text if text.strip() != "" else None
 
 
+def is_absent(pack, field, raw):
+    """Whether the text of a field with `absent` is one of its sentinels
+    (spec 0.9): references resolved, not trimmed."""
+    return raw in field.absent
+
+
 def items(pack, el, group):
     """-> the item elements of `group`: each child element named by the last
     name of its path, under the first element matched by the names before it,
@@ -354,8 +360,12 @@ def _fill(node, enc):
                 fixed.setdefault(ln.locator, ln.value)
     resolved = dict(fixed)
     values = enc.values
+    sentinels = enc.sentinels
     for i, ln in plan.ifields:
-        if i in values and ln.locator not in resolved:
+        if i in values and ln.locator not in resolved and i not in sentinels:
+            resolved[ln.locator] = values[i]
+    for i, ln in plan.ifields:  # a sentinel where no field with a value writes (ruling 16 of 0.9)
+        if i in sentinels and ln.locator not in resolved:
             resolved[ln.locator] = values[i]
     for i, g in plan.igroups:
         children = enc.groups.get(i)

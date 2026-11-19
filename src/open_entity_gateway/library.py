@@ -4,8 +4,9 @@ A gateway track is written as a Canonical Track v2 and converted by the
 copied goat-transformers Python engine to `cot-xml`, `asterix-cat062` or
 `sapient`. The values a track does not carry, or that the gateway decides, go
 in as conversion context, with the keys open-billie's goat-transformers option
-uses: the track identity as `track.scoped_id`, the CoT type, stale time, `how`
-and callsign; for CAT062 SAC, SIC and the track number; for SAPIENT the object id,
+uses: the track identity as `track.scoped_id`, the CoT type, stale time, `how`,
+callsign and access; for CAT062 SAC, SIC, the track number, MRH, SRC and the
+service identification; for SAPIENT the object id,
 the report `id` and the class.
 """
 
@@ -90,8 +91,9 @@ def convert(track: Track, to: str, context: dict[str, str], simulated: bool = Fa
     return bytes.fromhex(out.decode()) if to in BINARY else bytes(out)
 
 
-def cot(track: Track) -> bytes:
+def cot(track: Track, access: str) -> bytes:
     context = {
+        "access": access,  # the destination's, as the native encoder writes it
         "track.scoped_id": track.uid,
         "type": track.cot_type,
         "stale_ms": str(track.stale_ns // (NANOS // 1000)),
@@ -103,18 +105,28 @@ def cot(track: Track) -> bytes:
     return convert(track, "cot-xml", context)
 
 
-def cat062(track: Track, sac: int, sic: int, track_number: int, simulated: bool) -> bytes:
-    return convert(
-        track,
-        "asterix-cat062",
-        {
-            "cat062.sac": str(sac),
-            "cat062.sic": str(sic),
-            "cat062.track_number": str(track_number),
-            "track.confirmed": "1",
-        },
-        simulated,
-    )
+def cat062(
+    track: Track,
+    sac: int,
+    sic: int,
+    track_number: int,
+    simulated: bool,
+    altitude_source: int = 0,
+    service_id: int | None = None,
+) -> bytes:
+    context = {
+        "cat062.sac": str(sac),
+        "cat062.sic": str(sic),
+        "cat062.track_number": str(track_number),
+        "track.confirmed": "1",
+        # SRC, the block's altitude_source, as the native encoder writes it.
+        "cat062.src": str(altitude_source),
+    }
+    if track.hae is not None:
+        context["cat062.mrh"] = "1"  # I062/130 is written: geometric altitude more reliable
+    if service_id is not None:
+        context["cat062.service_id"] = str(service_id)  # I062/015
+    return convert(track, "asterix-cat062", context, simulated)
 
 
 def sapient(track: Track, object_id: str, report_id: str | None, classification: str | None) -> bytes:

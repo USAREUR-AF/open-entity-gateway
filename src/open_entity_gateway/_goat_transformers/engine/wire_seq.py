@@ -139,6 +139,10 @@ class _Reader:
             if first.swap:
                 raw = _swap_int(raw, length)
         fields = sc.fields
+        if first.absent is not None:  # a sentinel (0.9): compared with the bits as an integer, after `swap`
+            n = int.from_bytes(raw, "big" if msg.msb else "little") if as_bytes else raw
+            if n in first.absent:
+                return
         for f in nd.bindings:  # the line's key and each `also` key: one transform, the table of each
             key = f.key
             if key in fields:
@@ -529,7 +533,8 @@ class _Writer:
 
     def field(self, nd, ctx):
         """The value of the earliest key of the line that is present, else the
-        earliest `default` among them, else zero bits."""
+        earliest `default` among them, else the line's first sentinel (0.9),
+        else zero bits. A sentinel is never content (ruling 4 of 0.9)."""
         length = nd.length
         fields = ctx.fields
         for f in nd.bindings:
@@ -543,7 +548,12 @@ class _Writer:
                     value = defaults[f.key]
                     break
             else:
-                self.pos += length
+                first = nd.bindings[0]
+                if first.absent_out is None:
+                    self.pos += length
+                else:  # the integer into the field's bits, then `swap`
+                    v = first.absent_out & ((1 << length) - 1)
+                    self.put(length, _swap_int(v, length) if first.swap else v)
                 return
         try:
             c2n = self.pack.cot_to_native

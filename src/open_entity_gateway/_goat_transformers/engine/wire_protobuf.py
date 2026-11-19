@@ -211,6 +211,22 @@ def get(pack, msg, field):
     return msg.lookup(field.loc, locator=field.locator)
 
 
+def is_absent(pack, field, raw):
+    """Whether the `(wire_type, raw)` of a field with `absent` is one of its
+    sentinels (spec 0.9): a varint before zig-zag, the fixed bytes as an
+    unsigned little-endian integer, the bytes of a `pstring`. A wire type
+    other than the transform's is never a sentinel: the transform then fails
+    (ruling 15 of 0.9)."""
+    wt, value = raw
+    if wt != field.transform.wire_type:
+        return False
+    if wt == FIXED64 or wt == FIXED32:
+        value = int.from_bytes(value, "little")
+    elif wt == LEN:
+        value = bytes(value)
+    return value in field.absent
+
+
 def _scalar_field(group):
     """The `.` field of a group body (its index in the body and the line), or
     None when the items are submessages."""
@@ -337,8 +353,12 @@ def _tree(pack, enc, kind_lines=()):
     tree = {}
     plan = enc.plan
     values = enc.values
+    sentinels = enc.sentinels
     for i, ln in plan.ifields:
-        if i in values and ln.loc:
+        if i in values and ln.loc and i not in sentinels:
+            _set(tree, ln.loc, values[i], overwrite=False)
+    for i, ln in plan.ifields:  # a sentinel where no field with a value writes (ruling 16 of 0.9)
+        if i in sentinels and ln.loc:
             _set(tree, ln.loc, values[i], overwrite=False)
     for i, g in plan.igroups:
         children = enc.groups.get(i)

@@ -2,7 +2,7 @@
 
 import os
 
-from . import wire_bits, wire_geojson, wire_json, wire_protobuf, wire_seq, wire_xml
+from . import wire_bits, wire_geojson, wire_json, wire_protobuf, wire_seq, wire_text, wire_xml
 from .errors import (
     BadDirective, DistributionRefused, DistributionViolation, DuplicateModule, InvalidPack, KeyTypeMismatch, MalformedWire,
     ModuleNotUsed, NoKind, TransformDecodeFailure, TransformEncodeFailure, UndeclaredKey, UnknownFormat,
@@ -17,6 +17,7 @@ DERIVE_PASSES = 8  # spec 0.6: the pass repeats until it sets nothing, at most 8
 
 _CODECS = {
     "xml": wire_xml, "geojson": wire_geojson, "json": wire_json, "bits": wire_bits, "protobuf": wire_protobuf,
+    "text": wire_text,
 }
 _Num = wire_geojson.Num
 
@@ -73,12 +74,13 @@ class _Enc:
     encoded scope of each item of its list (absent when the entity has no such
     list)."""
 
-    __slots__ = ("plan", "values", "groups")
+    __slots__ = ("plan", "values", "groups", "sentinels")
 
     def __init__(self, plan):
         self.plan = plan
         self.values = {}
         self.groups = {}
+        self.sentinels = set()  # the indices in `values` that hold a sentinel (0.9), not a value
 
 
 class Engine:
@@ -343,7 +345,7 @@ class Engine:
     @staticmethod
     def _decode_value(wire, transform, raw):
         """Run one field's transform over its raw wire value. Raises ValueError."""
-        if wire in ("bits", "protobuf"):
+        if wire in ("bits", "protobuf", "text"):
             return transform.decode(raw)
         if wire == "xml":
             return transform.decode(raw)
@@ -404,6 +406,8 @@ class Engine:
         res = None
         if wire == "xml" or wire == "json":
             res = codec.residue(pack, msg, mapped)
+        elif wire == "text":
+            res = codec.residue(pack, msg, plan)
         elif wire == "geojson":
             res = {}
             for loc, val in obs:
@@ -454,6 +458,8 @@ class Engine:
             raw = get(pack, ctx, f)
             if raw is None:
                 continue
+            if f.absent is not None and codec.is_absent(pack, f, raw):
+                continue  # a sentinel: the line yields no value, as if its locator were absent (0.9)
             try:
                 value = self._decode_value(wire, f.transform, raw)
             except ValueError as e:
@@ -624,6 +630,8 @@ class Engine:
         residue = entity.residue.get(pack.name, {})
         if wire == "json":
             return codec.encode(pack, enc, residue).encode("utf-8")
+        if wire == "text":
+            return codec.write(pack, enc, residue).encode("utf-8")
         if wire == "xml":
             return codec.write(pack, enc, residue.items(), plan.root).encode("utf-8")
         return codec.encode(pack, enc, residue, wire_json.item_text).encode("utf-8")
@@ -646,6 +654,9 @@ class Engine:
             elif key in defaults:
                 value = defaults[key]
             else:
+                if f.absent_out is not None:  # the first sentinel, in place of every option (0.9)
+                    values[i] = f.absent_out
+                    enc.sentinels.add(i)
                 continue
             try:
                 if c2n and key == "type" and value in c2n:

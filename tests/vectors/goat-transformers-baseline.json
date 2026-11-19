@@ -2,13 +2,6 @@
  {
   "format": "cot",
   "input": "examples/records/harbour-buoy.records.jsonl:1",
-  "field": "/event/@access",
-  "native": "Undefined",
-  "library": "(absent)"
- },
- {
-  "format": "cot",
-  "input": "examples/records/harbour-buoy.records.jsonl:1",
   "field": "/event/@stale",
   "native": "2025-06-15T15:09:40Z",
   "library": "2025-06-15T15:09:40.000Z"
@@ -26,13 +19,6 @@
   "field": "/event/@time",
   "native": "2025-06-15T15:06:40Z",
   "library": "2025-06-15T15:06:40.000Z"
- },
- {
-  "format": "cot",
-  "input": "examples/records/weather-station.records.jsonl:4",
-  "field": "/event/@access",
-  "native": "Undefined",
-  "library": "(absent)"
  },
  {
   "format": "cot",
@@ -58,13 +44,6 @@
  {
   "format": "cot",
   "input": "examples/tracks/example.tracks.jsonl:1",
-  "field": "/event/@access",
-  "native": "Undefined",
-  "library": "(absent)"
- },
- {
-  "format": "cot",
-  "input": "examples/tracks/example.tracks.jsonl:1",
   "field": "/event/@stale",
   "native": "2025-06-15T15:08:43.25Z",
   "library": "2025-06-15T15:08:43.250Z"
@@ -82,13 +61,6 @@
   "field": "/event/@time",
   "native": "2025-06-15T15:06:43.25Z",
   "library": "2025-06-15T15:06:43.250Z"
- },
- {
-  "format": "cot",
-  "input": "examples/tracks/example.tracks.jsonl:2",
-  "field": "/event/@access",
-  "native": "Undefined",
-  "library": "(absent)"
  },
  {
   "format": "cot",
@@ -177,13 +149,6 @@
  {
   "format": "asterix-cat062",
   "input": "examples/records/harbour-buoy.records.jsonl:1",
-  "field": "I062/080/MRH",
-  "native": "1",
-  "library": "0"
- },
- {
-  "format": "asterix-cat062",
-  "input": "examples/records/harbour-buoy.records.jsonl:1",
   "field": "I062/080/PSR",
   "native": "(absent)",
   "library": "0"
@@ -268,22 +233,8 @@
  {
   "format": "asterix-cat062",
   "input": "examples/records/weather-station.records.jsonl:4",
-  "field": "I062/080/MRH",
-  "native": "1",
-  "library": "0"
- },
- {
-  "format": "asterix-cat062",
-  "input": "examples/records/weather-station.records.jsonl:4",
   "field": "I062/080/PSR",
   "native": "(absent)",
-  "library": "0"
- },
- {
-  "format": "asterix-cat062",
-  "input": "examples/records/weather-station.records.jsonl:4",
-  "field": "I062/080/SRC",
-  "native": "1",
   "library": "0"
  },
  {
@@ -361,13 +312,6 @@
   "input": "examples/tracks/example.tracks.jsonl:1",
   "field": "I062/080/MI",
   "native": "(absent)",
-  "library": "0"
- },
- {
-  "format": "asterix-cat062",
-  "input": "examples/tracks/example.tracks.jsonl:1",
-  "field": "I062/080/MRH",
-  "native": "1",
   "library": "0"
  },
  {

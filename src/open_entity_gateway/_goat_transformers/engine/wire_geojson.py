@@ -14,7 +14,7 @@ import re
 
 from .errors import MalformedWire
 from .packdef import parse_geojson_locator
-from .transforms import canonical_number
+from .transforms import canonical_number, format_float
 
 
 MISSING = object()
@@ -195,6 +195,29 @@ def when_text(when):
     return dump_string(v)
 
 
+def sentinel_text(value):
+    """The raw text a sentinel is compared with on `json` and `geojson` (spec
+    0.9): a string's text, a number's canonical text through a double
+    (ruling 19), `true` or `false`; None for `null`, an object or an array."""
+    if isinstance(value, Num):
+        try:
+            return format_float(float(value))
+        except (ValueError, OverflowError):
+            return None
+    if isinstance(value, str):
+        return value
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return None
+
+
+def is_absent(pack, field, raw):
+    text = sentinel_text(raw)
+    return text is not None and text in field.absent
+
+
 def when_holds(pack, first, when):
     return when_matches(when, first.get(when.locator, MISSING), pack.name)
 
@@ -335,10 +358,14 @@ def encode(pack, enc, residue, item_text):
             ln.value if text.startswith('"') else Num(text) if text not in ("true", "false") else RawJSON(text)
         )
     values = enc.values
+    sentinels = enc.sentinels
     for i, ln in plan.ifields:
-        if i in values and ln.locator not in resolved:
+        if i in values and ln.locator not in resolved and i not in sentinels:
             out = values[i]
             resolved[ln.locator] = Num(out) if ln.transform.kind == "number" else out
+    for i, ln in plan.ifields:  # a sentinel where no field with a value writes (ruling 16 of 0.9)
+        if i in sentinels and ln.locator not in resolved:
+            resolved[ln.locator] = RawJSON(values[i])
     for i, g in plan.igroups:
         children = enc.groups.get(i)
         if children is not None and g.locator not in resolved:

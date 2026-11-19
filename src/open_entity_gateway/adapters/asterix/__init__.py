@@ -108,8 +108,7 @@ class AsterixCat062(Adapter):
         self.printing = bool(destination.get("print"))
         from ...library import choose
 
-        # The asterix-cat062 pack does not map I062/015.
-        self.encoder = choose(destination, self.label, native_only=("service_id",))
+        self.encoder = choose(destination, self.label)
         self.sac = _byte(destination, "sac", self.label, not self.printing) or 0
         self.sic = _byte(destination, "sic", self.label, not self.printing) or 0
         self.service_id = _byte(destination, "service_id", self.label, False)
@@ -169,7 +168,15 @@ class AsterixCat062(Adapter):
             from ...library import cat062
 
             number = self.track_number(track, record, block)
-            return cat062(track, self.sac, self.sic, number, self.simulated(record, block))
+            return cat062(
+                track,
+                self.sac,
+                self.sic,
+                number,
+                self.simulated(record, block),
+                block.altitude_source,
+                self.service_id,
+            )
         items: dict[str, bytes] = {"010": bytes((self.sac, self.sic))}
         if self.service_id is not None:
             items["015"] = bytes((self.service_id,))
