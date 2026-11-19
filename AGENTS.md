@@ -4,7 +4,7 @@ Instructions for AI coding agents, and a short version for people working here. 
 
 ## What this repository is
 
-open-entity-gateway turns decoded records into tracks and publishes them over Cursor-on-Target, SAPIENT and ASTERIX category 062, and through optional vendor adapters. [first-bite](https://github.com/USAREUR-AF/first-bite) is the reference source of records; any program writing the same record shape can feed it. It holds no first-bite code and no vendor code.
+open-entity-gateway holds bridges between the goat fabric and vendor systems, one package per vendor under `vendors/`. Its scope is set by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/pull/1084) (proposed). Open standards (Cursor on Target, SAPIENT, ASTERIX) belong to [goat-transformers](https://github.com/USAREUR-AF/goat-transformers); this repository's own senders and encoders for them are moving there and keep working until goat-transformers passes the same tests.
 
 ## Rules
 
@@ -14,4 +14,5 @@ open-entity-gateway turns decoded records into tracks and publishes them over Cu
 4. **Vendor adapters stay separate.** A vendor SDK is never a dependency of the core, never installed by CI, never vendored. Lattice's SDK is never a dependency at all.
 5. **Neutral wording.** A company or product is named only to say which published interface an adapter speaks.
 6. **Status words exact** (CONTRIBUTING.md). Claim a test against a system only after running it.
-7. **Commits:** Conventional Commits, signed off (`git commit -s`) and signed.
+7. **Scope (ADR 1255).** Add no open-standard sender, encoder or data model here; those go to goat-transformers. Add no relay that republishes another component's output for a third to deliver. A new bridge is a new package under `vendors/`.
+8. **Commits:** Conventional Commits, signed off (`git commit -s`) and signed.

@@ -1,111 +1,71 @@
 # open-entity-gateway
 
-**Turns decoded messages into tracks and publishes them over open interface standards: Cursor-on-Target, SAPIENT and ASTERIX category 062. Optional adapters reach vendor systems.**
+**Bridges between the goat fabric and vendor systems.** Each bridge is its own package that speaks one vendor's software
+kit: Anduril Lattice and Picogrid ECN today, and the next vendor's tomorrow.
 
-<p align="center"><img src="docs/img/gateway-flow.svg" width="820" alt="Records or Canonical Track v2 objects arrive over HTTP, from a file or ZeroMQ; a mapping file picks which become tracks; each track goes only to the destinations the configuration lists. A record that cannot fill its mapping is refused and nothing is sent."></p>
+Systems that speak an open standard (TAK servers over Cursor on Target, SAPIENT controllers, ASTERIX consumers) are reached
+through [goat-transformers](https://github.com/USAREUR-AF/goat-transformers), not through this repository. The scope is set
+by goatcore [ADR 1255](https://github.com/USAREUR-AF/goatcore/pull/1084) (proposed).
 
-- **Reads records.** A record is a JSON or CBOR object with one message's decoded fields under `message`, plus `subsystem`, `message_type` and `timestamp`. [first-bite](https://github.com/USAREUR-AF/first-bite) writes them; any program writing the same shape can feed the gateway.
-- **Maps them.** A small YAML file per message says which records become tracks and which fields fill them ([docs/mapping.md](docs/mapping.md)).
-- **Sends only where you say.** There is no default destination. A configuration that lists none stops the gateway at start-up.
+<p align="center"><img src="docs/img/where-it-fits.svg" width="820" alt="Tracks on the goat fabric reach outside systems three ways. Systems that speak an open standard, such as TAK servers, SAPIENT controllers and ASTERIX consumers, are reached through goat-transformers and its transport adapters. Vendor systems reached through the vendor's own software kit, such as Anduril Lattice and Picogrid ECN, are reached through this repository's vendor bridges. Receivers that cannot join the mesh are reached through an octo-pod's release gate and egress."></p>
 
-Where this is heading, as the one way tracks leave the goat fabric for systems outside it: [docs/design/track-egress.md](docs/design/track-egress.md) (designed, not built).
+## What is here, and what is leaving
 
-## Interfaces
+This repository began as a general gateway with its own track model, encoders and senders for open standards. Those parts
+duplicate goat-transformers and are moving there. Each keeps working until goat-transformers passes the same end-to-end test.
 
-| Interface | Kind | Status | Tested against |
-|---|---|---|---|
-| Cursor-on-Target 2.0 (UDP, multicast, TCP, TLS) | open standard | built, measured | OpenTAKServer; MITRE schemas |
-| SAPIENT, BSI Flex 335 v2.0 | open standard | built, measured | Dstl Apex SAPIENT middleware 4.2.0 |
-| ASTERIX category 062 | open standard | built, measured | asterix4py decoder, field by field |
-| goat fabric (Zenoh), for an octo-pod to deliver | fabric destination | built, measured | two in-process Zenoh peers |
-| Anduril Lattice SDK | vendor adapter | built | the SDK with a local stub |
-| Picogrid ECN SDK | vendor adapter | built, measured | the SDK's offline mock |
+<p align="center"><img src="docs/img/inside.svg" width="820" alt="Four tiers. Vendor packages: Lattice, Picogrid ECN, and room for the next vendor. The shared core: the adapter interface and inputs, moving to read goat-transformers' shared model. Moving to goat-transformers: the CoT, SAPIENT and ASTERIX senders and the gateway's own encoders, which keep working until goat-transformers passes the same tests. Withdrawn: the fabric relay destination."></p>
 
-**Not built yet.** Open standards: STANAG 4676, OGC SensorThings, OARIS 2.0, C2SIM, NGVA. Vendor interfaces: Aaronia AARTOS, Auterion SDK, BAE Systems INTeACT, Palantir platform SDKs, Picogrid Legion, Rheinmetall TacticalAPI, Skydio Cloud API.
+| Part | Status | Where it is going |
+|---|---|---|
+| Anduril Lattice bridge (`vendors/lattice/`) | built | stays |
+| Picogrid ECN bridge (`vendors/picogrid-ecn/`), with a recorded live run against an ECN and OrionX | built, measured | stays |
+| Shared core: adapter interface, mapping files, inputs (HTTP, file, ZeroMQ, Zenoh) | built | stays, and will read goat-transformers' shared model instead of its own track type |
+| Cursor on Target sender (UDP, multicast, TCP, TLS), SAPIENT edge-node session, ASTERIX CAT062 sender | built, measured | moving to goat-transformers `adapters/` |
+| Its own CoT, SAPIENT and CAT062 encoders | built | replaced by goat-transformers packs (already selectable: `encoder: goat-transformers`) |
+| `fabric` destination, which republished encoded tracks for an octo-pod to relay | withdrawn | no replacement; a pod delivers directly from whatever publishes the data |
 
-Owners, licences, sources and dates for every row: [docs/interfaces.md](docs/interfaces.md). What each built adapter sends: [docs/adapters/](docs/adapters/); the fabric destination: [docs/adapters/fabric.md](docs/adapters/fabric.md). What an unbuilt vendor adapter would need, and companies with no published interface: [docs/vendors.md](docs/vendors.md). Controlled military data links are out of scope: Link 16, JREAP, VMF, ADatP-3, JC3IEDM.
+## Adding a vendor
 
-Each CoT, CAT062 and SAPIENT destination can also encode through goat-transformers (`encoder: goat-transformers`, off by default; what differs: [docs/goat-transformers-encoder.md](docs/goat-transformers-encoder.md)).
+A bridge is a package under `vendors/<vendor>/` with its own `pyproject.toml`, tests and README. It implements the adapter
+interface in `src/open_entity_gateway/adapter.py` and imports its vendor's SDK, which the user installs under the vendor's
+licence. Core CI installs no vendor SDK, and a bridge's tests skip unless its SDK is present. What an unbuilt vendor bridge
+would need, and companies with no published interface: [docs/vendors.md](docs/vendors.md). Owners, licences and sources
+of the interfaces researched: [docs/interfaces.md](docs/interfaces.md). Vendors are listed
+alphabetically; their presence is not a preference, and bridges for other vendors are welcome.
 
-Status words: **built** means the code exists and its unit tests pass; **measured** means a command ran against the named test target. Vendors are listed alphabetically and their presence is not an endorsement or a preference; integrations for other vendors are welcome.
-
-## Neutrality
-
-This project implements publicly available interface standards. Named products and companies appear only to state which published standard or interface an adapter speaks, as described by their owners at the cited sources. No endorsement by or of any company, product or government is implied. All trademarks belong to their owners. Optional vendor adapters require the user to obtain and accept that vendor's licence; this project distributes no vendor software.
-
-## Run it
+## Run a bridge
 
 Python 3.11 or later.
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install --require-hashes -r requirements/runtime.txt
-pip install --no-deps -e .
-python tools/fetch-sapient-proto.py      # only for the SAPIENT adapter; needs requirements/tools.txt
-```
-
-Print what each adapter would send for first-bite's example records, sending nothing:
-
-```bash
-open-entity-gateway print --mapping mappings --adapter cot examples/records/weather-station.records.jsonl
-```
-
-```xml
-<event version="2.0" uid="KX7" type="a-f-G" time="2025-06-15T15:06:43Z" start="2025-06-15T15:06:43Z" stale="2025-06-15T15:16:43Z" how="m-g" access="Undefined"><point lat="64.8378" lon="-147.7164" hae="136.5" ce="9999999" le="9999999"/><detail><contact callsign="KX7"/></detail></event>
-```
-
-To send, write a configuration that names each destination ([examples/gateway.yml](examples/gateway.yml)), check it, then take records from first-bite's `rest` sink or from a file:
-
-```bash
-open-entity-gateway check  --config gateway.yml
-open-entity-gateway serve  --config gateway.yml --listen 127.0.0.1:5001
-open-entity-gateway replay --config gateway.yml examples/records/weather-station.records.jsonl --shift-to-now
-```
-
-`serve` answers each POST: `204` the record was queued for every destination or no mapping matches it; `422` a mapping matches and the record cannot fill it; `400`, `404`, `411`, `413`, `415` for a request that is not a record posted to the path. It speaks plain HTTP and binds loopback by default. The `zmq` command reads first-bite's ZeroMQ publisher socket instead (`pip install pyzmq`).
-
-The `zenoh` command reads the goat fabric: it subscribes only to the key expressions given with `--key` (at least one; a key made only of wildcards is refused), and takes endpoints, TLS and credentials from a Zenoh configuration file (`--zenoh-config`). Each sample is one record or one Canonical Track v2, as JSON or CBOR (`pip install 'open-entity-gateway[zenoh]'`, Zenoh 1.9.0).
-
-```bash
+pip install --no-deps -e . -e vendors/picogrid-ecn     # or vendors/lattice; then install that vendor's SDK
+open-entity-gateway check --config gateway.yml
 open-entity-gateway zenoh --config gateway.yml --zenoh-config fabric.json5 --key 'sensors/*/tracks'
 ```
 
-## Mapping files
-
-One YAML file per message. The keys `uid`, `type`, `position`, `stale_minutes` and `form` are first-bite's `cot:` mapping keys and mean the same, so the block a first-bite subscriber carries under `cot:` is a mapping file's core unchanged. [docs/mapping.md](docs/mapping.md) gives every key, the value forms, and where the gateway differs from first-bite.
-
-```yaml
-match: { subsystem: WX, message_type: Position, dictionary: weather-station }
-uid: [station_id]
-type: { value: "a-f-G" }
-position: { geodetic: [latitude, longitude, altitude] }
-stale_minutes: 10
-time: capture              # default: the record's capture time
-name: { field: station_id }
-```
+A configuration names each destination; there is no default ([examples/gateway.yml](examples/gateway.yml)). The `zenoh`
+command subscribes only to the key expressions given with `--key` and refuses a key made only of wildcards. Each bridge's
+options: [docs/adapters/lattice.md](docs/adapters/lattice.md), [docs/adapters/picogrid-ecn.md](docs/adapters/picogrid-ecn.md).
+Mapping files: [docs/mapping.md](docs/mapping.md).
 
 ## Tests
 
 ```bash
 pip install --require-hashes -r requirements/runtime.txt -r requirements/dev.txt -r requirements/tools.txt
 python tools/fetch-cot-xsd.py && python tools/fetch-sapient-proto.py
-python -m pytest
+python -m pytest tests vendors/lattice/tests
 ```
 
-The unit tests need no server and no vendor SDK. `tests/e2e/run-on-build-host.sh` starts OpenTAKServer and Dstl's Apex in containers and runs `tests/e2e/` against them. The vendor packages' tests are under `vendors/*/tests/`; each skips unless its vendor SDK is installed, and CI installs none.
+## Neutrality
 
-## Repository
-
-| Path | What |
-|---|---|
-| `src/open_entity_gateway/` | the core (inputs, mapping, gateway, adapter interface) and the open-standard adapters |
-| `vendors/lattice/`, `vendors/picogrid-ecn/` | optional vendor adapters, each its own package |
-| `mappings/` | example mapping files, for first-bite's weather-station dictionary and hello-galaxy-first-bite's harbour-buoy dictionary |
-| `examples/` | example records and an example configuration |
-| `tools/` | pinned fetchers for the SAPIENT protos and the CoT schemas; the cotify test-vector generator |
-| `tests/` | unit tests; `tests/e2e/` against servers in containers; `tests/vectors/` events first-bite wrote |
-| `docs/` | mapping, interfaces, adapters, vendors, handling rules, relationship to first-bite and goat, the track-egress design |
+Named products and companies appear only to state which published interface a bridge speaks, as described by their owners.
+No endorsement by or of any company, product or government is implied. All trademarks belong to their owners. A bridge
+requires the user to obtain and accept that vendor's licence; this project distributes no vendor software.
 
 ## Licence
 
-Apache License 2.0; see [LICENSE](LICENSE), [NOTICE](NOTICE) and [INTENT.md](INTENT.md). Third-party material the gateway fetches or depends on keeps its own licence; [NOTICE](NOTICE) lists it. Part of [goat](https://github.com/USAREUR-AF/goatcore): see [docs/first-bite-and-goat.md](docs/first-bite-and-goat.md).
+Apache License 2.0; see [LICENSE](LICENSE), [NOTICE](NOTICE) and [INTENT.md](INTENT.md). Part of
+[goat](https://github.com/USAREUR-AF/goatcore).
