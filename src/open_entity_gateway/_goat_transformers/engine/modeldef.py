@@ -3,6 +3,7 @@
 import math
 from dataclasses import dataclass, field as dc_field
 
+from . import derive16
 from .errors import (
     BadDirective, DistributionRefused, DistributionViolation, DuplicateKey, DuplicateModule, MissingDistribution,
     MissingModule, MissingSource, MissingVersion, UnknownDirective, UnknownModule, UnterminatedQuote,
@@ -89,7 +90,7 @@ def _parse_int(text):
 
 
 _NO_PARAM = ("copy", "hypot", "bearing", "east_of", "north_of", "neg", "day_seconds", "any", "not", "parse_int",
-             "text_of", "present")
+             "text_of", "present") + tuple(derive16.ARG_COUNT)
 # 0.8: function -> (argument count or None for one or more, argument type, result type)
 _TYPED = {
     "day_seconds": (1, "int", "float"),
@@ -109,7 +110,8 @@ _TYPED_FN = {
 
 # function -> argument count, None for one or more
 _ARG_COUNT = {"copy": 1, "hypot": 2, "bearing": 2, "east_of": 2, "north_of": 2, "neg": 1, "day_seconds": 1,
-              "any": None, "not": 1, "parse_int": 1, "text_of": 1, "present": 1, "scale": 1, "offset": 1, "join": None}
+              "any": None, "not": 1, "parse_int": 1, "text_of": 1, "present": 1, "scale": 1, "offset": 1, "join": None,
+              **derive16.ARG_COUNT}
 
 
 def _check_derive_text(function, n):
@@ -164,6 +166,20 @@ def _build_derive(function, target_type, arg_types):
         if target_type != "int":
             raise ValueError("present needs an int target")
         return lambda a: 1
+    if name in derive16.TYPED:  # the functions added in 0.16; ruling 4: no promotion
+        count, arg_type, result_type, fn = derive16.TYPED[name]
+        if n != count:
+            raise ValueError("%s takes %d argument(s), got %d" % (name, count, n))
+        if target_type != result_type or any(t != arg_type for t in arg_types):
+            raise ValueError("%s needs %s argument(s) and a %s target" % (name, arg_type, result_type))
+        return fn
+    if name in derive16.ARITH:  # 0.16 ruling 4: target and both arguments all int or all float
+        if n != 2:
+            raise ValueError("%s takes 2 argument(s), got %d" % (name, n))
+        fns = derive16.ARITH[name]
+        if target_type not in fns or any(t != target_type for t in arg_types):
+            raise ValueError("%s needs a target and two arguments that are all int or all float" % name)
+        return fns[target_type]
     if name == "copy":
         if n != 1:
             raise ValueError("copy takes 1 argument(s), got %d" % n)

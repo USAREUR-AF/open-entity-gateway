@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEST = ROOT / "src" / "open_entity_gateway" / "_goat_transformers"
 ENGINE = [
-    "__init__.py", "engine.py", "entity.py", "errors.py", "modeldef.py", "packdef.py", "seqdef.py",
+    "__init__.py", "derive16.py", "engine.py", "entity.py", "errors.py", "modeldef.py", "packdef.py", "seqdef.py",
     "transforms.py", "wire_bits.py", "wire_geojson.py", "wire_json.py", "wire_protobuf.py", "wire_seq.py",
     "wire_text.py", "wire_tlv.py", "wire_xml.py",
 ]  # fmt: skip
