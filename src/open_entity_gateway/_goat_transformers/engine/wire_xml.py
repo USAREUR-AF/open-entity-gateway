@@ -359,9 +359,15 @@ def _fill(node, enc):
     first = plan.cache.get("first")
     if first is None:
         first = plan.cache["first"] = {}
-        for ln in plan.lines:
+        at = plan.cache["first_at"] = {}
+        for i, ln in enumerate(plan.lines):
             if (ln.is_field or not ln.present) and ln.locator not in first:
                 first[ln.locator] = ln
+                at[ln.locator] = i
+        plan.cache["elements"] = _element_places(plan)
+    first_at = plan.cache["first_at"]
+    elements = plan.cache["elements"]
+    ei = 0
     fixed = plan.cache.get("fixed")
     if fixed is None:  # the `when` and `const` values, the first for each locator
         fixed = plan.cache["fixed"] = {}
@@ -382,6 +388,11 @@ def _fill(node, enc):
         if children and g.locator not in resolved:
             resolved[g.locator] = children
     for locator in plan.order:
+        if elements:  # 0.18: the elements of `element` lines placed before this locator
+            here = first_at[locator]
+            while ei < len(elements) and elements[ei][0] <= here:
+                _touch(node, elements[ei][1])
+                ei += 1
         if locator not in resolved:
             continue
         ln = first[locator]
@@ -404,6 +415,44 @@ def _fill(node, enc):
             target.attrs.setdefault(name, value)
         elif target.text is None:
             target.text = value
+    while ei < len(elements):
+        _touch(node, elements[ei][1])
+        ei += 1
+
+
+def _line_path(ln):
+    if getattr(ln, "is_element", False) or ln.is_group:
+        return tuple(ln.loc)
+    return tuple(ln.loc[0])
+
+
+def _element_places(plan):
+    """0.18: -> [(position, path)], in position order: each element an
+    `element` line names, and each on the way to it, with the index of the
+    first line of the plan that addresses it or a path under it (ruling 13)."""
+    lines = plan.lines
+    want = set()
+    for ln in lines:
+        if getattr(ln, "is_element", False):
+            for n in range(1, len(ln.loc) + 1):
+                want.add(ln.loc[:n])
+    if not want:
+        return ()
+    place = {}
+    for i, ln in enumerate(lines):
+        if not ln.is_field and not ln.is_group and ln.present and not getattr(ln, "is_element", False):
+            continue  # `when <locator> present` names no position (ruling 19 of 0.18)
+        path = _line_path(ln)
+        for n in range(1, len(path) + 1):
+            pre = path[:n]
+            if pre in want and pre not in place:
+                place[pre] = i
+    return sorted(((i, p) for p, i in place.items()), key=lambda e: (e[0], len(e[1])))
+
+
+def _touch(node, path):
+    for seg in path:
+        node = node.child(seg)
 
 
 def write(pack, enc, residue=(), root_name=None):

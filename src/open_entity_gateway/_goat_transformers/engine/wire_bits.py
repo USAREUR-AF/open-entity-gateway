@@ -29,6 +29,12 @@ fixed-layout input must reach every bit the selected scope needs, whatever
 an `optional` field counted only when it is written), zero-filled to a
 multiple of 6. A `sixbit` field's raw value is its six-bit values, first
 character first, each read as a six-bit field in the pack's bit order.
+
+Gate blocks (Version 0.17): `if [!]<locator> <value>[,...]` ... `end`. A line of
+a block carries the innermost block as `gate`; each scope lists its blocks,
+outer before nested, as `plan.gates`. Decode reads a line of a block only when
+the block holds; encode chooses the held blocks in `_choose` (steps 1 to 4),
+writes them in `_emit` (step 5) and checks the output in `write` (step 6).
 """
 
 import re
@@ -99,13 +105,16 @@ def _start(pack, loc):
 
 def _ends(pack, plan):
     """-> (required, all): the furthest bit, counted from the scope's first
-    bit, that the scope's own lines reach. `required` leaves out the fields
-    with the `optional` option (decode); `all` counts every line (encode). A
-    count locator and the start of a group count in both."""
+    bit, that the scope's own lines outside any gate block reach. `required`
+    leaves out the fields with the `optional` option (decode); `all` counts
+    every line (encode). A count locator and the start of a group count in
+    both. The lines of a gate block count only when it holds (0.17)."""
     ends = plan.cache.get("ends")
     if ends is None:
         req = full = 0
         for ln in plan.lines:
+            if ln.gate is not None:
+                continue
             if ln.is_group:
                 end = _start(pack, ln.loc)
                 if ln.count_loc is not None:
@@ -259,6 +268,14 @@ def check_length(pack, msg, plan):
         end = _measure(pack, msg, plan, 0)
     else:
         end = _ends(pack, plan)[0]
+    if plan.gates:
+        # 0.17: a held block's fields that are not optional and its `const`
+        # lines count; a gate locator does not (it is read like a `when`). A
+        # block inside an item lies within the item, which is counted whole.
+        held = gates_held(pack, msg, plan)
+        for ln in plan.lines:
+            if ln.gate is not None and held[ln.gate] and not (ln.is_field and ln.optional):
+                end = max(end, _start(pack, ln.loc) + ln.loc[2])
     if pack.armor == "sixbit":  # every needed bit, whatever word_bytes is (0.14)
         if msg.nbits < end:
             raise MalformedWire(
@@ -271,6 +288,28 @@ def check_length(pack, msg, plan):
         raise MalformedWire(
             "message is %d byte(s); the format needs %d" % (msg.nbytes, need), format=pack.name
         )
+
+
+def gates_held(pack, view, plan):
+    """-> {gate: whether its block holds} for the gate blocks of the scope read
+    through `view` (0.17). A gate's bits are read as unsigned; a gate any of
+    whose bits lies beyond the input does not hold, nor does its `!` form; a
+    nested gate holds only when the block enclosing it holds."""
+    msg = view.msg
+    base = view.base
+    held = {}
+    for g in plan.gates:
+        p = g.parent
+        if p is not None and not held[p]:
+            held[g] = False
+            continue
+        start = base + _start(pack, g.loc)
+        length = g.loc[2]
+        if start + length > msg.nbits:
+            held[g] = False
+            continue
+        held[g] = (msg.uint(start, length) in g.vset) != g.negate
+    return held
 
 
 def get(pack, view, field):
@@ -341,54 +380,218 @@ def items(pack, view, group):
     return [View(msg, b) for b in _item_bases(pack, msg, group, view.base)[0]]
 
 
-def _emit(pack, enc, base, ops):
-    """Add to `ops` the `(start, length, value)` writes of one scope that
-    starts at bit `base`, in the order they are applied (a later write stands
-    over an earlier one); -> the bit after the furthest bit the scope reaches.
-    Where two written fields cover the same bits the earlier line's value
-    stands; a field with a value, or a default, stands over a sentinel whatever
-    their order (ruling 16 of 0.9); `when` and `const` values are written over
-    any field (0.5 ruling 5), and a count over any field on its bits (ruling 2
-    of 0.7).
+# How a write stands against the others on the same bits (0.17 ruling 7): a
+# `const`, `when`, count or field with a present key is STRONG; a `default` or
+# a sentinel is WEAK; a gate value (GATE) is written only over bits no STRONG
+# write covered. Between field lines ruling 5 of 0.5 holds, defaults included.
+WEAK, STRONG, GATE = 0, 1, 2
 
-    Under `armor sixbit` the end is `L` of 0.14: an `optional` field counts
-    only when it is written (its key present, a `default`, or its first
-    sentinel: ruling 12 of 0.14)."""
+
+class _Buf:
+    """Bits being written, held as one integer of `nbits` bits in the pack's
+    bit order. `strong` holds the bits any STRONG write covered, whatever wrote
+    last: a gate value is written only over bits that only a `default` or a
+    sentinel wrote (ruling 7 of 0.17). `written` holds the bits a STRONG or
+    GATE write covered (step 3, ruling 11)."""
+
+    __slots__ = ("nbits", "msb", "acc", "strong", "written")
+
+    def __init__(self, nbits, msb):
+        self.nbits = nbits
+        self.msb = msb
+        self.acc = 0
+        self.strong = 0
+        self.written = 0
+
+    def _mask(self, start, length):
+        shift = self.nbits - start - length if self.msb else start
+        return shift, ((1 << length) - 1) << shift
+
+    def write(self, start, length, v, flag):
+        shift, m = self._mask(start, length)
+        full = m
+        if flag == GATE:
+            m &= ~self.strong
+        self.acc = (self.acc & ~m) | ((v << shift) & m)
+        if flag == STRONG:
+            self.strong |= m
+            self.written |= m
+        elif flag == GATE:
+            self.written |= full
+
+    def any_written(self, start, length):
+        return bool(self.written & self._mask(start, length)[1])
+
+    def read(self, start, length):
+        shift, m = self._mask(start, length)
+        return (self.acc & m) >> shift
+
+
+def _field_ops(pack, enc, base, ops, keep):
+    """Add the writes of the scope's `field` lines to `ops`, in the order they
+    are applied (a later write stands over an earlier one). Where two written
+    fields cover the same bits the earlier line's value stands; a field with a
+    value, or a default, stands over a sentinel whatever their order (ruling
+    16 of 0.9). With `keep` ({gate: bool}), a line of a gate block is written
+    only when `keep` holds it; a held line whose value could not be encoded is
+    `transform-encode`."""
     plan = enc.plan
     lines = plan.lines
     values = enc.values
     sentinels = enc.sentinels
-    if pack.armor == "sixbit":
-        end = base + _ends(pack, plan)[0]
-        for i in values:
-            ln = lines[i]
-            if ln.optional:
-                end = max(end, base + _start(pack, ln.loc) + ln.loc[2])
-    else:
-        end = base + _ends(pack, plan)[1]
+    defaulted = enc.defaulted
+    errors = enc.errors
     order = range(len(lines) - 1, -1, -1)  # later lines first, so earlier ones overwrite them
     if sentinels:
         order = [i for i in order if i in sentinels] + [i for i in order if i not in sentinels]
     for i in order:
+        if keep is not None:
+            g = lines[i].gate
+            if g is not None:
+                if not keep[g]:
+                    continue
+                if i in errors:
+                    raise errors[i]
         if i not in values:
             continue
         ln = lines[i]
+        flag = WEAK if (i in sentinels or i in defaulted) else STRONG
         start = base + _start(pack, ln.loc)
         v = values[i]
         if isinstance(v, (bytes, bytearray)):
             if ln.swap:
                 v = v[::-1]
             for k, b in enumerate(v):
-                ops.append((start + 8 * k, 8, b))
+                ops.append((start + 8 * k, 8, b, flag))
         elif isinstance(v, tuple):  # the six-bit values of a `sixbit` field
             for k, c in enumerate(v):
-                ops.append((start + 6 * k, 6, c))
+                ops.append((start + 6 * k, 6, c, flag))
         else:
             v = int(v) & ((1 << ln.loc[2]) - 1)
-            ops.append((start, ln.loc[2], _swap_int(v, ln.loc[2]) if ln.swap else v))
-    for ln in lines:
+            ops.append((start, ln.loc[2], _swap_int(v, ln.loc[2]) if ln.swap else v, flag))
+
+
+def _fixed_ops(pack, plan, base, ops, keep):
+    """Add the writes of the scope's `when` and `const` lines (0.5 ruling 5:
+    over any field). With `keep`, a `const` of a gate block only when held."""
+    for ln in plan.lines:
         if not ln.is_field and not ln.is_group:
-            ops.append((base + _start(pack, ln.loc), ln.loc[2], ln.value))
+            if keep is not None and ln.gate is not None and not keep[ln.gate]:
+                continue
+            ops.append((base + _start(pack, ln.loc), ln.loc[2], ln.value, STRONG))
+
+
+def _choose(pack, enc):
+    """Steps 1 to 4 of 0.17's encode for one scope, in the scope's own bits ->
+    ({gate: held}, {gate: its gate value}). A block is open when a field line
+    of it, or of a nested open block, maps a key the scope holds. The lines
+    outside any block are written; each open block none of whose gate bits is
+    written then gets its gate value, in line order; each block is evaluated on
+    those bits, bits nothing wrote reading as 0. The bits an item's lines
+    write are not part of the scope (ruling 9)."""
+    plan = enc.plan
+    gates = plan.gates
+    have = enc.have or {}
+    opened = dict.fromkeys(gates, False)
+    suppressed = enc.suppressed
+    for i, f in plan.ifields:
+        g = f.gate
+        if g is not None and f.key in have and i not in suppressed:  # 0.18 ruling 1
+            while g is not None and not opened[g]:
+                opened[g] = True
+                g = g.parent
+    nbits = 0
+    for ln in plan.lines:
+        if ln.is_group:
+            if ln.count_loc is not None:
+                nbits = max(nbits, _start(pack, ln.count_loc) + ln.count_loc[2])
+        else:
+            nbits = max(nbits, _start(pack, ln.loc) + ln.loc[2])
+    for g in gates:
+        nbits = max(nbits, _start(pack, g.loc) + g.loc[2])
+    buf = _Buf(nbits, pack.bit_order == "msb")
+    ops = []
+    outside = dict.fromkeys(gates, False)
+    _field_ops(pack, enc, 0, ops, outside)
+    _fixed_ops(pack, plan, 0, ops, outside)
+    for i, g in plan.igroups:
+        if g.count_loc is not None:
+            n = len(enc.groups.get(i) or ())
+            ops.append((_start(pack, g.count_loc), g.count_loc[2], n & ((1 << g.count_loc[2]) - 1), STRONG))
+    for op in ops:
+        buf.write(*op)
+    values = {}
+    for g in gates:
+        if not opened[g] or g.enc_value is None:
+            continue
+        start = _start(pack, g.loc)
+        if buf.any_written(start, g.loc[2]):
+            continue  # the block is evaluated on the bits as they are
+        buf.write(start, g.loc[2], g.enc_value, GATE)
+        values[g] = g.enc_value
+    held = {}
+    for g in gates:
+        p = g.parent
+        held[g] = (p is None or held[p]) and (buf.read(_start(pack, g.loc), g.loc[2]) in g.vset) != g.negate
+    return held, values
+
+
+def _emit(pack, enc, base, ops, checks):
+    """Add to `ops` the `(start, length, value, flag)` writes of one scope that
+    starts at bit `base`, in the order they are applied; -> the bit after the
+    furthest bit the scope reaches. `when` and `const` values are written over
+    any field (0.5 ruling 5), and a count over any field on its bits (ruling 2
+    of 0.7). With gate blocks (0.17) only the lines outside any block and the
+    lines of the held blocks are written, with the gate value of each held
+    block that got one; the scope is added to `checks` for step 6."""
+    plan = enc.plan
+    held = None
+    if plan.gates:
+        held, gate_values = _choose(pack, enc)
+    armored = pack.armor == "sixbit"
+    if armored:
+        # `L` of 0.14: an `optional` field counts only when it is written (its
+        # key present, a `default`, or its first sentinel: ruling 12 of 0.14),
+        # and a line of a gate block only when the block is held (0.17)
+        end = base + _ends(pack, plan)[0]
+        lines = plan.lines
+        for i in enc.values:
+            ln = lines[i]
+            if ln.optional and (ln.gate is None or held[ln.gate]):
+                end = max(end, base + _start(pack, ln.loc) + ln.loc[2])
+    else:
+        end = base + _ends(pack, plan)[1]
+    _field_ops(pack, enc, base, ops, held)
+    if held is not None:
+        for g in plan.gates:
+            if held[g]:
+                end = max(end, base + _start(pack, g.loc) + g.loc[2])
+                if g in gate_values:
+                    ops.append((base + _start(pack, g.loc), g.loc[2], gate_values[g], GATE))
+        for i, ln in enumerate(plan.lines):
+            if ln.gate is not None and held[ln.gate]:
+                if armored and ln.is_field and ln.optional:
+                    continue  # counted above when written
+                end = max(end, base + _start(pack, ln.loc) + ln.loc[2])
+        have = enc.have or {}
+        unheld = set()
+        kept = set()
+        for i, f in plan.ifields:
+            if f.key in have and i not in enc.suppressed:  # 0.18 ruling 1: not mapped for step 6
+                if f.gate is None or held[f.gate]:
+                    kept.add(f.key)
+                else:
+                    unheld.add(f.key)
+        lost = unheld - kept
+        if lost:
+            key = min(lost, key=lambda k: next(i for i, f in plan.ifields if f.key == k))
+            loc = next(f.locator for f in plan.fields if f.key == key)
+            raise TransformEncodeFailure(
+                "key %s is mapped only by lines of gate blocks that do not hold" % key,
+                format=pack.name, locator=loc,
+            )
+        checks.append((plan, base, held))
+    _fixed_ops(pack, plan, base, ops, held)
     counts = []
     for i, g in plan.igroups:
         children = enc.groups.get(i)
@@ -410,10 +613,10 @@ def _emit(pack, enc, base, ops):
                     "list %s has %d item(s), which does not fit the %d-bit count" % (g.list, n, g.count_loc[2]),
                     format=pack.name, locator=g.locator,
                 )
-            counts.append((base + _start(pack, g.count_loc), g.count_loc[2], n))
+            counts.append((base + _start(pack, g.count_loc), g.count_loc[2], n, STRONG))
         pos = base + _start(pack, g.loc)
         for child in children or ():
-            pos = max(pos + g.item_bits, _emit(pack, child, pos, ops))
+            pos = max(pos + g.item_bits, _emit(pack, child, pos, ops, checks))
         end = max(end, pos)
     ops.extend(counts)
     return end
@@ -423,22 +626,46 @@ def write(pack, enc):
     """`enc` is the encoded top scope: `values` maps a field line's index to
     its raw value, `groups` a group line's index to the encoded scope of each
     item. Bits no line covers are zero; the message is whole words. Returns
-    lowercase hex."""
+    lowercase hex. With gate blocks, the output must decode to the blocks the
+    encode chose (step 6 of 0.17), checked per scope on the whole output."""
     ops = []
-    end = _emit(pack, enc, 0, ops)
-    if pack.armor == "sixbit":
-        return armored_text(_lay_out(ops, end, True), end)
-    word_bits = pack.word_bytes * 8
-    nbytes = -(-end // word_bits) * pack.word_bytes
-    acc = _lay_out(ops, nbytes * 8, pack.bit_order == "msb")
-    return acc.to_bytes(nbytes, "big" if pack.bit_order == "msb" else "little").hex()
+    checks = []
+    end = _emit(pack, enc, 0, ops, checks)
+    armored = pack.armor == "sixbit"
+    if armored:  # `L` bits of 0.14, in msb order (`armor sixbit` needs `bit_order msb`)
+        nbits = end
+        msb = True
+    else:
+        word_bits = pack.word_bytes * 8
+        nbytes = -(-end // word_bits) * pack.word_bytes
+        nbits = nbytes * 8
+        msb = pack.bit_order == "msb"
+    acc = _lay_out(ops, nbits, msb, bool(checks))
+    if armored:
+        msg = Message.from_bits(pack, acc, nbits) if checks else None
+    else:
+        out = acc.to_bytes(nbytes, "big" if msb else "little")
+        msg = Message(pack, out) if checks else None
+    for plan, base, held in checks:
+        if gates_held(pack, View(msg, base), plan) != held:
+            raise TransformEncodeFailure(
+                "the output does not decode to the gate blocks the encode chose", format=pack.name,
+            )
+    return armored_text(acc, end) if armored else out.hex()
 
 
-def _lay_out(ops, nbits, msb):
+def _lay_out(ops, nbits, msb, gated=False):
     """The `nbits` bits the writes give, as one integer in bit order; a later
-    write stands over an earlier one."""
+    write stands over an earlier one, except that a gate value is written only
+    over bits that only a `default` or a sentinel wrote (`gated`, ruling 7 of
+    0.17)."""
+    if gated:
+        buf = _Buf(nbits, msb)
+        for op in ops:
+            buf.write(*op)
+        return buf.acc
     acc = 0
-    for start, length, v in ops:
+    for start, length, v, _ in ops:
         shift = nbits - start - length if msb else start
         mask = (1 << length) - 1
         acc = (acc & ~(mask << shift)) | ((v & mask) << shift)

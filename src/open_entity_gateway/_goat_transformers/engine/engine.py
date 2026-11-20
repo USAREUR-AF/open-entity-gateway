@@ -77,13 +77,17 @@ class _Enc:
     encoded scope of each item of its list (absent when the entity has no such
     list)."""
 
-    __slots__ = ("plan", "values", "groups", "sentinels")
+    __slots__ = ("plan", "values", "groups", "sentinels", "defaulted", "errors", "have", "suppressed")
 
-    def __init__(self, plan):
+    def __init__(self, plan, have=None):
         self.plan = plan
         self.values = {}
         self.groups = {}
         self.sentinels = set()  # the indices in `values` that hold a sentinel (0.9), not a value
+        self.defaulted = set()  # the indices in `values` that hold a `default`, not the scope's value
+        self.errors = {}        # index of a line of a gate block -> its encode error, raised if the block is held
+        self.have = have        # the scope's keys (bits: whether a gate block is open, 0.17)
+        self.suppressed = set() # the indices of field lines whose `with` key the scope does not hold (0.18)
 
 
 def _check_unread_numbers(doc, read, fmt):
@@ -507,6 +511,8 @@ class Engine:
         keep_in_residue = None
         n2c = pack.native_to_cot
         get = codec.get
+        # 0.17: a line of a gate block that does not hold counts as a line whose locator is absent
+        held = codec.gates_held(pack, ctx, plan) if plan.gates else None
         for f in plan.fields:
             key = f.key
             if key in settled:
@@ -514,6 +520,8 @@ class Engine:
                     raw = get(pack, ctx, f)
                     if isinstance(raw, _Num):
                         read.add(id(raw))
+                continue
+            if held is not None and f.gate is not None and not held[f.gate]:
                 continue
             raw = get(pack, ctx, f)
             if read is not None and isinstance(raw, _Num):
@@ -656,6 +664,8 @@ class Engine:
                         if not present:
                             continue
                         value = d.fn(*present)
+                    elif d.positional:  # `tokens` (0.18 ruling 7): set when one argument is present and not 0
+                        value = d.fn(*[fields.get(a) for a in d.args])
                     else:
                         value = d.fn(*[fields[a] for a in d.args])
                 except KeyError:
@@ -722,7 +732,7 @@ class Engine:
         whose list the scope has: one encoded scope per item, in order. A
         common or kind `default` does not reach into items; a `default` inside
         a group applies to its items."""
-        enc = _Enc(plan)
+        enc = _Enc(plan, have)
         defaults = plan.defaults
         c2n = pack.cot_to_native
         values = enc.values
@@ -731,15 +741,33 @@ class Engine:
             if i in skip:
                 continue  # its item holds a `when` or `const` value (ruling 9 of 0.13)
             key = f.key
+            w = f.with_key
+            if w is not None and w not in have and not lists.get(w):
+                enc.suppressed.add(i)
+                continue  # 0.18: as a line whose key is absent, with no default and no sentinel
             if key in have:
                 value = have[key]
-            elif key in defaults:
-                value = defaults[key]
             else:
-                if f.absent_out is not None:  # the first sentinel, in place of every option (0.9)
-                    values[i] = f.absent_out
-                    enc.sentinels.add(i)
-                continue
+                # 0.17 ruling 5: the innermost block's default, then the enclosing
+                # blocks', then the scope's
+                gate = f.gate
+                d = None
+                while gate is not None:
+                    d = gate.defaults.get(key)
+                    if d is not None:
+                        break
+                    gate = gate.parent
+                if d is not None:
+                    value = d.value
+                    enc.defaulted.add(i)
+                elif key in defaults:
+                    value = defaults[key]
+                    enc.defaulted.add(i)
+                else:
+                    if f.absent_out is not None:  # the first sentinel, in place of every option (0.9)
+                        values[i] = f.absent_out
+                        enc.sentinels.add(i)
+                    continue
             try:
                 if c2n and key == "type" and value in c2n:
                     value = c2n[value]
@@ -747,7 +775,11 @@ class Engine:
                     value = _via_encode(f, value)
                 values[i] = f.transform.encode(value)
             except ValueError as e:
-                raise TransformEncodeFailure(str(e), format=pack.name, locator=f.locator)
+                err = TransformEncodeFailure(str(e), format=pack.name, locator=f.locator)
+                if f.gate is None:
+                    raise err
+                enc.defaulted.discard(i)
+                enc.errors[i] = err  # a block that is not held writes nothing (0.17)
         for i, g in plan.igroups:
             items = lists.get(g.list)
             if items is None:
