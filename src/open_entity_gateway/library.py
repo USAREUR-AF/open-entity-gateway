@@ -28,13 +28,26 @@ _engine: Any = None
 _lock = threading.Lock()
 
 
-def choose(destination: dict[str, Any], label: str, native_only: tuple[str, ...] = ()) -> str:
-    """The destination's `encoder`. With `goat-transformers` the packs are
-    loaded here, at start, and a key in `native_only` (one only the native
-    encoder writes) is refused rather than dropped. Raises ConfigError."""
+def choose(
+    destination: dict[str, Any],
+    label: str,
+    native_only: tuple[str, ...] = (),
+    default: str = "native",
+) -> str:
+    """The destination's `encoder`, or `default` when it names none. A
+    destination that names none but sets a key in `native_only` (one only the
+    native encoder writes) keeps the native encoder, so a configuration
+    written before the default changed behaves as before. With
+    `goat-transformers` the packs are loaded here, at start, and a key in
+    `native_only` is refused rather than dropped. Raises ConfigError."""
     from .adapter import ConfigError
 
-    encoder = destination.get("encoder", "native")
+    if "encoder" in destination:
+        encoder = destination["encoder"]
+    elif any(key in destination for key in native_only):
+        encoder = "native"
+    else:
+        encoder = default
     if encoder not in ENCODERS:
         raise ConfigError(f"destination {label!r}: encoder is native or goat-transformers")
     if encoder == "goat-transformers":

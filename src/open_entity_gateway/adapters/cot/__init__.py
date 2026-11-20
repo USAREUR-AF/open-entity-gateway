@@ -54,7 +54,7 @@ class CursorOnTarget(Adapter):
         from ...library import choose
 
         # The cot-xml pack writes its times in one form.
-        self.encoder = choose(destination, self.label, native_only=("time_form",))
+        self.encoder = choose(destination, self.label, native_only=("time_form",), default="goat-transformers")
         self.access = destination.get("access", "Undefined")
         if self.access not in ACCESS_VALUES:
             raise ConfigError(f"destination {self.label!r}: access is one of {list(ACCESS_VALUES)}")
