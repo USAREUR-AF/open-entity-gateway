@@ -198,7 +198,7 @@ def when_holds(pack, msg, when):
         return False
     if when.present:
         return True
-    return leaf[0] == VARINT and leaf[1] == when.value
+    return leaf[0] == VARINT and when.holds_int(leaf[1])
 
 
 def get(pack, msg, field):
@@ -340,6 +340,20 @@ def _has(tree, path):
     return True
 
 
+def _when_value(enc, ln):
+    """0.20 ruling 3: a `when` with a list or a range writes the varint of a
+    field line with a present key at the same path when it matches the
+    `when`, otherwise its first value. A `default` or a sentinel does not count."""
+    if not getattr(ln, "listed", False):
+        return ln.value
+    values = enc.values
+    for i, f in enc.plan.ifields:
+        if i in values and i not in enc.sentinels and i not in enc.defaulted and f.loc == ln.loc:
+            wt, payload = values[i]
+            return payload if wt == VARINT and ln.holds_int(payload) else ln.value
+    return ln.value
+
+
 def _tree(pack, enc, kind_lines=()):
     """The field-number-keyed tree of one encoded scope. Where two written
     fields share a path the earliest line's value stands. A group writes one
@@ -381,7 +395,7 @@ def _tree(pack, enc, kind_lines=()):
         _set(tree, g.loc, node, overwrite=False)
     for ln in plan.lines:
         if not ln.is_field and not ln.is_group and not ln.present:
-            _set(tree, ln.loc, (VARINT, ln.value), overwrite=True)
+            _set(tree, ln.loc, (VARINT, _when_value(enc, ln)), overwrite=True)
     for ln in kind_lines:
         if not ln.is_field and not ln.is_group and ln.present and not _has(tree, ln.loc):
             _set(tree, ln.loc, (LEN, b""), overwrite=True)

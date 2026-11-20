@@ -30,6 +30,7 @@ PACK_DIRECTIVES = frozenset((
     # 0.19 (ruling 21): directives of the language on every wire, `bad-directive`
     # outside a UPER pack, checked after the file is read
     "encoding", "ext", "choice", "alt",
+    "switch", "case", "else",  # sequential layouts (0.20)
 ))
 # The lines that stand after the `wire` line (5b): before it, `missing-wire`.
 NEEDS_WIRE = frozenset((
@@ -56,12 +57,15 @@ ARG_COUNTS = dict({kw: (1, 1) for kw in _ONE_ARG}, **{
     # 0.19: `encoding <none | uper>`, `ext`, `choice <n> [ext]`, `alt <i>`;
     # their counts are checked as the line is read, as for `armor`
     "encoding": (1, 1), "ext": (0, 0), "choice": (1, 2), "alt": (1, 1),
+    # 0.20: `switch <key>`, `case <values>`, `else`
+    "switch": (1, 1), "case": (1, 1), "else": (0, 0),
 })
 HEADER_ONCE = ("format", "version", "wire", "distribution")  # a second one is `bad-directive` (5b step 5)
 _SINGLE = ("word_bytes", "bit_order", "layout")
 LAYOUTS = ("fixed", "sequential")
 # Lines of a sequential pack (0.8): each is `bad-directive` in a fixed-layout pack.
-_SEQ_ONLY = ("pad", "align", "presence", "opt", "chain", "fx", "length", "also")
+_SEQ_ONLY = ("pad", "align", "presence", "opt", "chain", "fx", "length", "also",
+             "switch", "case", "else")  # 0.20: `switch` is a block of a sequential layout
 _GROUP_LINES = ("field", "const", "default", "group", "if", "end")
 # The lines of a gate block (0.17).
 _GATE_LINES = ("field", "const", "default", "if", "end")
@@ -110,11 +114,29 @@ class When:
     present: bool = False
     forced: bool = False
     lineno: int = 0
+    # 0.20: every value of the list. `bits` and `protobuf`: ((lo, hi), ...), a
+    # single value as (v, v); text wires: the texts. None: `value` alone.
+    ranges: tuple = None
+    texts: frozenset = None
 
     is_field = False
     is_const = False
     is_group = False
     gate = None
+
+    def __post_init__(self):
+        if self.ranges is None and isinstance(self.value, int) and not self.present:
+            self.ranges = ((self.value, self.value),)
+        if self.texts is None and isinstance(self.value, str):
+            self.texts = frozenset((self.value,))
+        # more than one value: ruling 3 of 0.20 applies on encode
+        self.listed = (self.ranges is not None and (len(self.ranges) > 1 or self.ranges[0][0] != self.ranges[0][1]))
+
+    def holds_int(self, v):
+        for lo, hi in self.ranges:
+            if lo <= v <= hi:
+                return True
+        return False
 
 
 @dataclass
@@ -153,6 +175,38 @@ class Element:
     gate = None
 
 
+class ValueCheck:
+    """A list of values read as a key's declared type when the pack is loaded
+    (0.20): a `requires <key>=<value>[,...]` term (`target` is the Kind) or a
+    `case` line (`target` is the Case). `canon` is set by Engine.add: the
+    canonical texts of the values."""
+
+    __slots__ = ("what", "key", "values", "lineno", "target", "canon", "switch", "key_type")
+
+    def __init__(self, what, key, values, lineno, target, switch=None):
+        self.what = what
+        self.key = key
+        self.values = values
+        self.lineno = lineno
+        self.target = target
+        self.switch = switch
+        self.canon = None
+        self.key_type = None
+
+
+def requires_term(term, bad):
+    """-> (key, values or None) of one `requires` term (0.20 ruling 4): split
+    at the first `=`; the rest is the value list."""
+    if "=" not in term:
+        return term, None
+    key, rest = term.split("=", 1)
+    if not key:
+        raise bad("the 'requires' term %r has no key before '='" % term)
+    if not rest:
+        raise bad("the 'requires' term %r has no value after '='" % term)
+    return key, split_list(rest, bad)
+
+
 @dataclass
 class Default:
     """`default <model-key> <value>` (0.6). `value` is `text` read as the key's
@@ -176,6 +230,7 @@ class Kind:
     root: str = None                                 # xml: the kind's own root element (0.6)
     defaults: list = dc_field(default_factory=list)  # Default lines of the kind
     gates: list = dc_field(default_factory=list)     # the kind's gate blocks, at any depth, in line order (0.17)
+    requires_eq: list = dc_field(default_factory=list)  # ValueCheck of each `requires <key>=<values>` term (0.20)
 
     @property
     def fields(self):
@@ -384,6 +439,7 @@ class Pack:
     armor: str = "hex"         # bits: `hex` or `sixbit` (0.14)
     gates: list = dc_field(default_factory=list)     # the common gate blocks, at any depth, in line order (0.17)
     uper: bool = False         # bits, sequential: `encoding uper` (0.19)
+    value_checks: list = dc_field(default_factory=list)  # ValueCheck, in line order (0.20)
     _plans: dict = dc_field(default_factory=dict, repr=False)
     _kind_index: dict = dc_field(default_factory=dict, repr=False)
     _kinds_by_root: dict = dc_field(default_factory=dict, repr=False)
@@ -1167,6 +1223,26 @@ def _resolve_when(wire, name, locator, value, source, lineno, deferred, directiv
             raise _bad_locator(wire, where, name, locator, e)
     if const and value == "present":
         return later("a 'const' value is written, so cannot be 'present' (text wires: '=present')")
+    # 0.20: a list of values, and on `bits` and `protobuf` ranges (checked after
+    # the file). Not on `text`: there a comma is the default delimiter, which a
+    # value may not hold (Version 0.10), and the value stays one literal text.
+    if not const and wire != "text":
+        if wire == "bits" and loc[2] > 64:
+            return later("a '%s' of %d bits; at most 64" % (directive, loc[2]))
+        width = loc[2] if wire == "bits" else 64 if wire == "protobuf" else None
+
+        def err(msg):
+            return BadDirective("%s, at %s" % (msg, where), format=name, locator=locator)
+
+        try:
+            return when_values(wire, value, width, err, lambda msg: _Deferred(err(msg)),
+                               lambda **kw: When(locator, loc, lineno=lineno, **kw))
+        except _Deferred as d:
+            deferred.append((lineno, d.err))
+            return None
+        except BadDirective as e:
+            deferred.append((lineno, e))
+            return None
     if wire == "bits":
         if loc[2] > 64:
             return later("a '%s' of %d bits; at most 64" % (directive, loc[2]))
@@ -1193,6 +1269,60 @@ def _resolve_when(wire, name, locator, value, source, lineno, deferred, directiv
     if value.startswith("="):
         return make(value[1:], forced=True)
     return make(value)
+
+
+def split_list(text, bad):
+    """0.20 ruling 16: the comma-separated items of a list; an empty item is
+    `bad-directive`, and only a lone `""` is the empty text."""
+    if text == "":
+        return [""]
+    items = text.split(",")
+    if "" in items:
+        raise bad("an empty value in the list %r" % text)
+    return items
+
+
+def when_values(wire, text, width, bad, deferred, make):
+    """-> When for the value list of one `when` line (0.20). `width` is the
+    number of bits a value must fit on `bits` and `protobuf`, None on a text
+    wire. `bad` builds the error raised at once, `deferred` the one raised
+    after the file is read (a value that does not fit)."""
+    if text == "present" and wire != "bits":
+        return make(present=True)
+    items = split_list(text, bad)
+    if width is None:  # a text wire: `..` is literal, a leading `=` is stripped from each value
+        if "present" in items:
+            raise bad("'present' may not be combined with other values")
+        texts = []
+        forced = []
+        for v in items:
+            if v.startswith("="):
+                texts.append(v[1:])
+                forced.append(True)
+            else:
+                texts.append(v)
+                forced.append(False)
+        return make(value=texts[0], forced=forced[0], texts=frozenset(texts))
+    if "present" in items:
+        raise bad("'present' may not be combined with other values" if wire == "protobuf"
+                  else "a bits 'when' value is an unsigned decimal integer, got 'present'")
+    ranges = []
+    late = None
+    for v in items:
+        parts = v.split("..")
+        if len(parts) > 2 or not all(p.isascii() and p.isdigit() for p in parts):
+            raise bad("a %s 'when' value is an unsigned decimal integer or a range <lo>..<hi>, got %r"
+                      % (wire, v))
+        lo = int(parts[0])
+        hi = int(parts[-1])
+        if lo > hi:
+            raise bad("the range %r has its low end above its high end" % v)
+        if hi >= (1 << width) and late is None:
+            late = deferred("'when' value %r does not fit %d bit(s)" % (v, width))
+        ranges.append((lo, hi))
+    if late is not None:
+        raise late
+    return make(value=ranges[0][0], ranges=tuple(ranges))
 
 
 def _check_bits_groups(word_bytes, common, kinds, deferred, source, name, common_gates=()):
@@ -1568,6 +1698,7 @@ def parse_pack_text(text, *, source="pack.def"):
     defaults = []
     tables = {}
     common_gates = []
+    value_checks = []
     via_fields = []
     deferred = []        # (lineno, BadDirective)
     elements = []        # (Element, the Kind holding it or None) (0.18)
@@ -1821,9 +1952,14 @@ def parse_pack_text(text, *, source="pack.def"):
             elif kw == "requires":
                 if current is None:
                     raise _Deferred(BadDirective("'requires' before the first 'kind', at %s" % where, format=fmt))
-                for key in args:
+                for term in args:
+                    key, values = requires_term(term, lambda m: BadDirective("%s, at %s" % (m, where), format=fmt))
                     if key not in current.requires:
                         current.requires.append(key)
+                    if values is not None:
+                        vc = ValueCheck("requires", key, values, lineno, current)
+                        current.requires_eq.append(vc)
+                        value_checks.append(vc)
                     key_refs.append((key, None))
             elif kw == "source":
                 sources.append(args[0])
@@ -1932,7 +2068,7 @@ def parse_pack_text(text, *, source="pack.def"):
         distribution=distribution, sources=sources, uses=uses, defaults=defaults, tables=tables,
         delimiter=delimiter, start=text_values.get("start"), checksum=text_values.get("checksum", "none"),
         armor=armor_value,
-        gates=common_gates,
+        gates=common_gates, value_checks=value_checks,
     )
     if wire == "tlv":
         pack.tlv_tag = tlv.get("tag", ("ber-oid",))[0]

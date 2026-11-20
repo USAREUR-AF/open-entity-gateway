@@ -315,7 +315,7 @@ def when_holds(pack, root, when):
         value = "".join(el.text)
         if not value:
             return False  # an element with no character data has no text
-    return True if when.present else value == when.value
+    return True if when.present else value in when.texts
 
 
 def residue(pack, root, mapped):

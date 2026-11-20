@@ -16,7 +16,7 @@ from .transforms import (
 from . import uper
 
 (T_FIELD, T_CONST, T_PAD, T_ALIGN, T_WHEN, T_PRESENCE, T_IF, T_OPT, T_GROUP, T_CHAIN, T_LENGTH,
- T_WHOLE, T_EXT, T_CHOICE, T_ALT) = range(15)
+ T_WHOLE, T_EXT, T_CHOICE, T_ALT, T_SWITCH) = range(16)
 
 GROUP_MODES = ("count", "while", "more", "fx", "size")
 _HEADER = ("format", "version", "wire", "layout", "bit_order", "word_bytes", "distribution", "source", "uses",
@@ -40,13 +40,18 @@ class Node:
     ext       `body` (0.19)
     choice    `n`, `ext`, `alts`: the `alt` nodes in line order, `index`: alt index -> node (0.19)
     alt       `value` (its index), `body`
+    switch    `key`, `cases` (Case), `other` (the `else` Case or None), `key_type`, `key_lines`: the
+              field nodes of the scope that map the key before the switch, in reading order (0.20)
     A field with a UPER locator has `uper` (a uper.Loc) and `length` None; a
-    `size` group has `lb` and `ub` (both None with no size constraint).
+    `size` group has `lb` and `ub` (both None with no size constraint). A
+    `when` has `ranges` (0.20); a presence `named_static`, the bits named by an
+    `if` outside any case that does not also hold the presence, and `chain`,
+    the cases the presence stands in.
     """
 
     __slots__ = ("t", "lineno", "length", "value", "bindings", "name", "named", "conds", "body", "list", "mode",
                  "scope", "parts", "ends_fx", "unit", "plus", "locator", "uper", "n", "ext", "alts", "index",
-                 "lb", "ub")
+                 "lb", "ub", "key", "cases", "other", "key_type", "ranges", "named_static", "chain", "key_lines")
 
     is_field = False
     is_const = False
@@ -63,7 +68,8 @@ class Node:
 
 
 def children(nd):
-    """The line lists inside a block node (none for a line that is not a block)."""
+    """The line lists inside a block node (none for a line that is not a block);
+    for a switch, every case and its `else` (0.20)."""
     t = nd.t
     if t == T_IF or t == T_OPT or t == T_LENGTH or t == T_EXT:
         return (nd.body,)
@@ -71,7 +77,38 @@ def children(nd):
         return nd.parts
     if t == T_CHOICE:
         return [a.body for a in nd.alts]
+    if t == T_SWITCH:
+        return [c.nodes for c in switch_cases(nd)]
     return ()
+
+
+class Case:
+    """One `case` or `else` body of a switch (0.20): its values (None for
+    `else`), their canonical texts (set by Engine.add), its lines, its
+    `default` lines, and the presence bits named by the `if` lines whose
+    innermost case it is: (presence node, bit)."""
+
+    __slots__ = ("values", "lineno", "nodes", "canon", "defaults", "if_names", "_dmap")
+
+    def __init__(self, values, lineno):
+        self.values = values
+        self.lineno = lineno
+        self.nodes = []
+        self.canon = frozenset()
+        self.defaults = []
+        self.if_names = []
+        self._dmap = None
+
+    def defaults_over(self, outer):
+        """{key: value} of the defaults in scope inside the case: the case's own over `outer`."""
+        if not self.defaults:
+            return outer
+        mine = self._dmap
+        if mine is None:
+            mine = self._dmap = {d.key: d.value for d in self.defaults}
+        out = dict(outer)
+        out.update(mine)
+        return out
 
 
 class GroupNode(Node):
@@ -91,6 +128,9 @@ class SeqKind:
         self.whens = []          # `when` nodes
         self.nodes = []
         self.requires = []
+        self.requires_eq = []    # ValueCheck of each `requires <key>=<values>` term (0.20)
+        self.mapped = set()      # keys mapped by a field or `also` line of the kind so far (0.20)
+        self.key_lines = {}      # key -> the field nodes of the kind that map it, in reading order
         self.requires_keys = ()  # set by Engine.add
         self.requires_lists = ()
         self.defaults = []       # Default lines
@@ -111,6 +151,8 @@ class Body:
         self.presences = {}
         self.lists = {}          # as SeqKind.lists, for the groups before the first kind
         self.first_when = None   # lineno of the first common `when`
+        self.mapped = set()      # keys mapped by a common field or `also` line so far (0.20)
+        self.key_lines = {}      # key -> the field nodes that map it, in reading order, while the file is read
         self._index = {}
         self._defaults = {}
 
@@ -141,7 +183,7 @@ class Body:
                 if t == T_GROUP:
                     for b in nd.scope.bodies():
                         yield b
-                else:
+                else:  # a switch: every case (0.20)
                     for part in children(nd):
                         for b in walk(part):
                             yield b
@@ -162,7 +204,7 @@ class Body:
                 elif t == T_GROUP:
                     add(prefix + nd.list + "[]")
                     nd.scope.model_keys(add, prefix + nd.list + "[].")
-                else:
+                else:  # a switch: every case (0.20 ruling 13)
                     for part in children(nd):
                         walk(part)
 
@@ -171,18 +213,24 @@ class Body:
             walk(k.nodes)
 
 
+def switch_cases(nd):
+    """The `case` bodies of a switch, then its `else`."""
+    return nd.cases + [nd.other] if nd.other is not None else nd.cases
+
+
 class _Frame:
     """One open block while the file is read."""
 
-    __slots__ = ("what", "node", "nodes", "lineno", "presences", "body")
+    __slots__ = ("what", "node", "nodes", "lineno", "presences", "body", "case")
 
-    def __init__(self, what, node, nodes, lineno, body=None):
-        self.what = what      # "group" | "if" | "opt" | "chain" | "length" | "ext" | "choice"
+    def __init__(self, what, node, nodes, lineno, body=None, case=None):
+        self.what = what      # "group" | "if" | "opt" | "chain" | "length" | "ext" | "choice" | "switch" | "case" | "else"
         self.node = node
-        self.nodes = nodes    # where the lines of the block go (a chain: its current part)
+        self.nodes = nodes    # where the lines of the block go (a chain: its current part; a switch: None)
         self.lineno = lineno
         self.presences = {}
         self.body = body      # a group: the Body of an item
+        self.case = case      # a case or else: its Case
 
 
 def _uint(text):
@@ -197,6 +245,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
     from .packdef import (
         BIT_ORDERS, HEADER_ONCE, NEEDS_WIRE, TEXT_DIRECTIVES, Default, Field, Pack, _check_transform, _Deferred,
         _LineBad, armor_line, check_armor, check_encoding, line_head, parse_absent, set_bit_order,
+        ValueCheck, requires_term, split_list, when_values,
     )
 
     seen = {}          # the header values (`line_head`)
@@ -208,6 +257,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
     typemap = []
     tables = {}
     key_refs = []
+    value_checks = []
     via_fields = []
     deferred = []      # (lineno, BadDirective)
     root = None
@@ -399,6 +449,18 @@ def parse_seq_pack_text(text, *, source="pack.def"):
             via_fields.append(f)
         return f
 
+    def cases_open():
+        """The cases the line stands in, outermost first (0.20)."""
+        return tuple(fr.case for fr in stack if fr.case is not None)
+
+    def mapped(body, f, nd):
+        """A field or `also` line maps its key in its scope: for a later `switch` (0.20)."""
+        owner = body.cur if body.cur is not None else body
+        owner.mapped.add(f.key)
+        lines = owner.key_lines.setdefault(f.key, [])
+        if nd not in lines:
+            lines.append(nd)
+
     def value_node(t, kw, args, lineno):
         text = args[0]
         if text.startswith(uper.PREFIXES):
@@ -411,6 +473,17 @@ def parse_seq_pack_text(text, *, source="pack.def"):
         if ":" in text:
             raise line_bad("a positional locator (%r) in a sequential pack" % text, lineno, text)
         length = bit_len(text, "a '%s'" % kw, lineno)
+        if t == T_WHEN:  # 0.20: a list of values and ranges, checked after the file
+            try:
+                w = when_values("bits", args[1], length, lambda m: bad(m, lineno, text),
+                                lambda m: _Deferred(bad(m, lineno, text)), lambda **kw: kw)
+            except _Deferred as d:
+                deferred.append((lineno, d.err))
+                w = {"value": 0, "ranges": ((0, 0),)}
+            except BadDirective as e:
+                deferred.append((lineno, e))
+                w = {"value": 0, "ranges": ((0, 0),)}
+            return Node(t, lineno, length=length, value=w["value"], ranges=w["ranges"], locator=text)
         try:
             n = read_uint_text(args[1])  # ruling 2c of 0.11
         except ValueError:
@@ -437,6 +510,8 @@ def parse_seq_pack_text(text, *, source="pack.def"):
         try:
             if wired is None and kw in NEEDS_WIRE and kw != "layout":
                 wired = kw
+            if stack and stack[-1].what == "switch" and kw not in ("case", "else", "end"):  # ruling 20 of 0.20
+                raise bad("%r between a 'switch' and its first 'case'" % kw, lineno)
             if stack and kw in _HEADER:
                 raise bad("%r inside a block" % kw, lineno)
             if stack and stack[-1].what == "choice" and not stack[-1].node.alts and kw not in ("alt", "end"):
@@ -527,13 +602,28 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                     raise bad("'requires' inside a block", lineno)
                 if body.cur is None:
                     raise bad("'requires' before the first 'kind'", lineno)
-                for key in args:
+                for term in args:
+                    key, values = requires_term(term, lambda m: bad(m, lineno))
                     if key not in body.cur.requires:
                         body.cur.requires.append(key)
+                    if values is not None:
+                        vc = ValueCheck("requires", key, values, lineno, body.cur)
+                        body.cur.requires_eq.append(vc)
+                        value_checks.append(vc)
                     key_refs.append((key, None))
             elif kw == "default":
                 d = Default(args[0], args[1], lineno)
-                (body.cur.defaults if body.cur is not None else body.defaults).append(d)
+                case = None
+                for fr in reversed(stack):  # 0.20 ruling 7: a default in a case is the case's
+                    if fr.what == "group":
+                        break
+                    if fr.case is not None:
+                        case = fr.case
+                        break
+                if case is not None:
+                    case.defaults.append(d)
+                else:
+                    (body.cur.defaults if body.cur is not None else body.defaults).append(d)
                 key_refs.append((args[0], d))
             elif kw == "when":
                 if in_block():  # ruling 10 of 0.8
@@ -557,6 +647,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                               locator=args[1], uper=loc)
                     target(body).append(nd)
                     last_field = (nd, args[2], args[3:])
+                    mapped(body, f, nd)
             elif kw == "also":
                 if prev_field is None:  # ruling 13 of 0.8
                     raise bad("'also' is written directly after a 'field' line", lineno)
@@ -582,6 +673,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                     f = make_field(args[0], nd.locator, tname, carried + extra, lineno, also=True)
                 if f is not None:
                     nd.bindings.append(f)
+                    mapped(body, f, nd)
                 last_field = prev_field
             elif kw == "const":
                 target(body).append(value_node(T_CONST, kw, args, lineno))
@@ -607,7 +699,8 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                 if stack and stack[-1].what == "ext" and stack[-1].nodes:  # ruling 15 of 0.19
                     raise bad("a 'presence' line inside an 'ext' block is its first line", lineno)
                 length = None if args[1] == "fx" else bit_len(args[1], "a 'presence'", lineno)
-                nd = Node(T_PRESENCE, lineno, name=name, length=length, named=set(), locator=args[1])
+                nd = Node(T_PRESENCE, lineno, name=name, length=length, named=set(), locator=args[1],
+                          named_static=set(), chain=cases_open())
                 table[name] = nd
                 target(body).append(nd)
             elif kw == "if":
@@ -632,6 +725,17 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                                       % (n, name, p.length), lineno)
                         break
                     p.named.add(n)
+                    # 0.20 ruling 21: the bit counts only when the innermost case the
+                    # `if` sits in, and the presence does not, is the one read
+                    case = None
+                    for c in reversed(cases_open()):
+                        if c not in p.chain:
+                            case = c
+                            break
+                    if case is None:
+                        p.named_static.add(n)
+                    else:
+                        case.if_names.append((p, n))
                     conds.append((p, n, neg))
                 nd = Node(T_IF, lineno, conds=conds, body=[])
                 target(body).append(nd)
@@ -716,6 +820,8 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                         blocks.append(fr.node)
                     elif fr.what == "choice" and fr.node.alts:  # ruling 20 of 0.19: different alts
                         blocks.append(fr.node.alts[-1])
+                    elif fr.case is not None:  # ruling 10 of 0.20: each case is a block
+                        blocks.append(fr.case)
                 lists = body.cur.lists if body.cur is not None else body.lists
                 for table in ((body.lists, lists) if lists is not body.lists else (lists,)):
                     for other in table.get(name, ()):
@@ -728,11 +834,46 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                 target(body).append(nd)
                 key_refs.append((name, nd))
                 stack.append(_Frame("group", nd, None, lineno, body=nd.scope))
+            elif kw == "switch":  # 0.20
+                key = args[0]
+                if key not in body.mapped and (body.cur is None or key not in body.cur.mapped):
+                    raise bad("'switch %s': the key is not mapped by a field or 'also' line before the switch in "
+                              "its scope" % key, lineno, key)
+                nd = Node(T_SWITCH, lineno, key=key, cases=[], other=None, key_type=None, locator=key,
+                          key_lines=tuple(body.key_lines.get(key, ())) + (
+                              tuple(body.cur.key_lines.get(key, ())) if body.cur is not None else ()))
+                target(body).append(nd)
+                stack.append(_Frame("switch", nd, None, lineno))
+            elif kw == "case" or kw == "else":  # 0.20
+                if stack and stack[-1].what in ("case", "else"):
+                    stack.pop()
+                if not stack or stack[-1].what != "switch":
+                    raise bad("%r outside a 'switch'" % kw, lineno)
+                sw = stack[-1].node
+                if kw == "case":
+                    if sw.other is not None:
+                        raise bad("'case' after the 'else' of its switch", lineno)
+                    values = split_list(args[0], lambda m: bad(m, lineno))
+                    c = Case(values, lineno)
+                    sw.cases.append(c)
+                    value_checks.append(ValueCheck("case", sw.key, values, lineno, c, switch=sw))
+                else:
+                    if sw.other is not None:
+                        raise bad("a second 'else' in one switch", lineno)
+                    if not sw.cases:
+                        raise bad("'else' before the first 'case' of its switch", lineno)
+                    c = Case(None, lineno)
+                    sw.other = c
+                stack.append(_Frame(kw, sw, c.nodes, lineno, case=c))
             else:  # end
                 if not stack:
                     raise bad("'end' with no open block", lineno)
                 fr = stack.pop()
-                if fr.what == "group":
+                if fr.what == "switch":
+                    raise bad("a 'switch' with no 'case'", lineno)
+                if fr.what == "case" or fr.what == "else":
+                    stack.pop()  # the switch
+                elif fr.what == "group":
                     close_body(fr.body, lineno)
                 elif fr.what == "chain":
                     parts = fr.node.parts
@@ -754,6 +895,8 @@ def parse_seq_pack_text(text, *, source="pack.def"):
         raise MissingVersion("the pack has no 'version' line in %s" % source, format=name)
     deferred.extend(text_dirs)
     for fr in stack:
+        if fr.what == "case" or fr.what == "else":
+            continue  # reported as its switch
         deferred.append((fr.lineno, bad("%r with no 'end'" % fr.what, fr.lineno)))
         if fr.what == "group":
             fr.body.close()
@@ -782,7 +925,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
     pack = Pack(
         name=name, version=version, wire="bits", bit_order=once.get("bit_order", "lsb"), kinds=msg.kinds,
         key_refs=key_refs, distribution=distribution, sources=sources, uses=uses, tables=tables,
-        armor=armor_value,
+        armor=armor_value, value_checks=value_checks,
     )
     pack.layout = "sequential"
     pack.seq = msg
