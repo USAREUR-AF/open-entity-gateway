@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>open-entity-gateway</title>
+<meta name="description" content="Bridges between the goat fabric and vendor systems: one package per vendor software kit, driven by mapping files.">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#top"><img src="assets/icon.svg" width="28" height="28" alt="">open-entity-gateway</a>
+    <nav aria-label="Sections">
+      <a href="#what">What it is</a><a href="#moving">What is moving</a><a href="#run">Run</a>
+      <a class="gh" href="https://github.com/USAREUR-AF/open-entity-gateway">GitHub</a>
+    </nav>
+  </header>
+</div>
+
+<main id="top">
+<section class="hero" aria-labelledby="name">
+<pre class="bgcode" aria-hidden="true">match:
+  subsystem: WX
+  message_type: Position
+  dictionary: weather-station
+uid: [station_id]
+type:
+  value: "a-f-G"
+position:
+  geodetic: [latitude, longitude, altitude]
+stale_minutes: 10
+time: capture
+name: { field: station_id }
+lattice:
+  entity_id: ["weather-station", { record: subsystem }, { field: station_id }]
+  template: TEMPLATE_ASSET
+  platform_type: "Weather station"
+  indicators: { simulated: true }</pre>
+  <div class="wrap hero-grid">
+    <div>
+      <p class="prompt">&gt;_ open-entity-gateway print<span class="cur" aria-hidden="true"></span></p>
+      <h1 class="wordmark" id="name">open-entity-gateway</h1>
+      <p class="tagline">Bridges between the goat fabric and vendor systems.</p>
+      <p class="lede">Each bridge is its own package that speaks one vendor's software kit: Anduril Lattice and Picogrid ECN today. A mapping file says how a record becomes a track; the bridge sends it in the vendor's form.</p>
+      <div class="buttons">
+        <a class="btn star" href="https://github.com/USAREUR-AF/open-entity-gateway"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.3L12 17.3l-5.7 3 1.1-6.3-4.6-4.5 6.4-.9z"/></svg>Star on GitHub</a>
+        <a class="btn" href="#run">Run a bridge</a>
+        <a class="btn" href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/mapping.md">Mapping files</a>
+      </div>
+      <div class="cmd"><pre><span class="dollar">$ </span><code id="c-print">open-entity-gateway print --mapping mappings --adapter lattice examples/records/weather-station.records.jsonl</code></pre><button class="copy" type="button" data-copy="c-print">Copy</button></div>
+    </div>
+
+    <div class="bridge" role="img" aria-label="One example record, the Position message of station KX7 at latitude 64.8378, longitude -147.7164, altitude 136.5 meters, passes through the weather-station mapping file and comes out as the payload open-entity-gateway prints for each adapter: a Lattice entity, a Cursor-on-Target event and a 25-octet ASTERIX CAT062 record. The values from the record are marked in each payload.">
+      <div class="sec rec"><div class="tag"><span>record</span><span id="rec-src">WX / Position, weather-station</span></div>
+        <pre id="rec">{"station_id": "KX7", "latitude": 64.8378, "longitude": -147.7164, "altitude": 136.5}</pre><i class="wire" id="w1"></i></div>
+      <div class="sec map"><div class="tag"><span>mapping</span><span>mappings/weather-station.position.yml</span></div>
+        <pre id="map"><span>uid: [station_id]</span><span>position: geodetic: [latitude, longitude, altitude]</span><span>stale_minutes: 10</span></pre><i class="wire" id="w2"></i></div>
+      <div class="tabs" role="tablist" aria-hidden="true" id="tabs">
+        <button type="button" data-k="lattice" aria-selected="false" tabindex="-1">Lattice</button>
+        <button type="button" data-k="cot" aria-selected="true" tabindex="-1">CoT</button>
+        <button type="button" data-k="cat062" aria-selected="false" tabindex="-1">CAT062</button>
+      </div>
+<pre class="out" id="out-static"><code>&lt;event version=&quot;2.0&quot; uid=&quot;KX7&quot; type=&quot;a-f-G&quot; time=&quot;2025-06-15T15:06:43Z&quot; start=&quot;2025-06-15T15:06:43Z&quot; stale=&quot;2025-06-15T15:16:43Z&quot; how=&quot;m-g&quot; access=&quot;Undefined&quot;&gt;&lt;point lat=&quot;64.8378&quot; lon=&quot;-147.7164&quot; hae=&quot;136.5&quot; ce=&quot;9999999&quot; le=&quot;9999999&quot;/&gt;&lt;detail&gt;&lt;contact callsign=&quot;KX7&quot;/&gt;&lt;/detail&gt;&lt;/event&gt;</code></pre>
+      <div class="note" id="note">What <code>open-entity-gateway print</code> writes for this record, captured when the page was built. It sends nothing.</div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="numbers">
+      <div><span class="n" data-measure="bridges">2</span><span class="l">vendor bridges</span><code>ls vendors/*/pyproject.toml | wc -l</code></div>
+      <div><span class="n" data-measure="inputs">4</span><span class="l">inputs: HTTP, file, ZeroMQ, Zenoh</span><code>ls src/open_entity_gateway/inputs</code></div>
+      <div><span class="n" data-measure="cot-vectors">9</span><span class="l">CoT events identical to first-bite's</span><code>wc -l tests/vectors/cotify.jsonl</code></div>
+      <div><span class="n" data-measure="sdk">0</span><span class="l">vendor SDKs installed by core CI</span><code>cat requirements/*.txt | grep -ciE 'anduril|picogrid'</code></div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="what">
+  <div class="wrap">
+    <h2>What it is</h2>
+    <p class="sub">Tracks on the goat fabric reach outside systems three ways. This repository is the way for systems reached through a vendor's own software kit.</p>
+    <div class="cards">
+      <div class="card"><h3>One package per vendor</h3><p>A bridge lives in <code>vendors/&lt;vendor&gt;/</code> with its own <code>pyproject.toml</code>, tests and README. It implements the adapter interface and imports its vendor's SDK, which the user installs under the vendor's license.</p></div>
+      <div class="card"><h3>A mapping file per message</h3><p>A YAML file matches one message type and says which fields are the identity, the position and the time, with one block per adapter. Every example address in the repository is a documentation address.</p></div>
+      <div class="card"><h3>Open standards go elsewhere</h3><p>TAK servers over Cursor on Target, SAPIENT controllers and ASTERIX consumers are reached through <a href="https://github.com/USAREUR-AF/goat-transformers">goat-transformers</a>, as goatcore ADR 1255 sets out.</p></div>
+    </div>
+    <figure style="margin:36px auto 0;max-width:820px">
+      <img src="assets/from-tree/where-it-fits.svg" width="760" height="312" alt="Tracks on the goat fabric reach outside systems three ways. Systems that speak an open standard, such as TAK servers, SAPIENT controllers and ASTERIX consumers, are reached through goat-transformers and its transport adapters. Vendor systems reached through the vendor's own software kit, such as Anduril Lattice and Picogrid ECN, are reached through this repository's vendor bridges. Receivers that cannot join the mesh are reached through an octo-pod's release gate and egress.">
+      <figcaption>From <code>docs/img/where-it-fits.svg</code>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band" id="moving">
+  <div class="wrap feature">
+    <div>
+      <h2>What is here, and what is moving</h2>
+      <p>The repository began as a general gateway with its own track model, encoders and senders for open standards. Those parts duplicate goat-transformers and are moving there. Each keeps working until goat-transformers passes the same end-to-end test.</p>
+      <div class="scroll"><table>
+        <thead><tr><th>Part</th><th>Status</th><th>Where it goes</th></tr></thead>
+        <tbody>
+          <tr><td>Anduril Lattice bridge</td><td>built</td><td>stays</td></tr>
+          <tr><td>Picogrid ECN bridge, with a recorded live run</td><td>built, measured</td><td>stays</td></tr>
+          <tr><td>Adapter interface, mapping files, inputs</td><td>built</td><td>stays; will read goat-transformers' shared model</td></tr>
+          <tr><td>CoT, SAPIENT and CAT062 senders</td><td>built, measured</td><td>goat-transformers <code>adapters/</code></td></tr>
+          <tr><td>Its own CoT, SAPIENT and CAT062 encoders</td><td>built</td><td>replaced by goat-transformers packs (<code>encoder: goat-transformers</code>)</td></tr>
+          <tr><td><code>fabric</code> destination</td><td>withdrawn</td><td>no replacement</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+    <figure>
+      <img src="assets/from-tree/inside.svg" width="760" height="374" loading="lazy" alt="Four tiers. Vendor packages: Lattice, Picogrid ECN, and room for the next vendor. The shared core: the adapter interface and inputs, moving to read goat-transformers' shared model. Moving to goat-transformers: the CoT, SAPIENT and ASTERIX senders and the gateway's own encoders. Withdrawn: the fabric relay destination.">
+      <figcaption>From <code>docs/img/inside.svg</code>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band" id="run">
+  <div class="wrap">
+    <h2>Run a bridge</h2>
+    <p class="sub">Python 3.11 or later. A configuration names each destination; there is no default. The <code>zenoh</code> command subscribes only to the key expressions given with <code>--key</code> and refuses a key made only of wildcards.</p>
+    <pre class="block">python -m venv .venv &amp;&amp; . .venv/bin/activate
+pip install --require-hashes -r requirements/runtime.txt
+pip install --no-deps -e . -e vendors/picogrid-ecn     # or vendors/lattice; then install that vendor's SDK
+open-entity-gateway check --config gateway.yml
+open-entity-gateway zenoh --config gateway.yml --zenoh-config fabric.json5 --key 'sensors/*/tracks'</pre>
+    <p><a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/examples/gateway.yml">Example configuration</a> &middot; <a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/adapters/lattice.md">Lattice bridge</a> &middot; <a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/adapters/picogrid-ecn.md">Picogrid ECN bridge</a> &middot; <a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/vendors.md">Adding a vendor</a></p>
+    <h3 style="margin-top:36px">Neutrality</h3>
+    <p class="sub">Named products and companies appear only to state which published interface a bridge speaks, as described by their owners. No endorsement by or of any company, product or government is implied. All trademarks belong to their owners. A bridge requires the user to obtain and accept that vendor's license; this project distributes no vendor software. Vendors are listed alphabetically, and bridges for other vendors are welcome.</p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><a href="https://github.com/USAREUR-AF/open-entity-gateway">Repository</a><a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/LICENSE">Apache License 2.0</a><a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/SECURITY.md">Security policy</a></p>
+    <p>Part of <a href="https://github.com/USAREUR-AF/goatcore">goat</a>.</p>
+  </div>
+</footer>
+<script src="assets/hero.js" defer></script>
+</body>
+</html>
