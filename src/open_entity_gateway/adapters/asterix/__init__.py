@@ -108,7 +108,7 @@ class AsterixCat062(Adapter):
         self.printing = bool(destination.get("print"))
         from ...library import choose
 
-        self.encoder = choose(destination, self.label)
+        self.encoder = choose(destination, self.label, default="goat-transformers")
         self.sac = _byte(destination, "sac", self.label, not self.printing) or 0
         self.sic = _byte(destination, "sic", self.label, not self.printing) or 0
         self.service_id = _byte(destination, "service_id", self.label, False)

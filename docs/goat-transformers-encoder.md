@@ -1,13 +1,13 @@
 # Encoding through goat-transformers
 
-**Status: built, off by default.** A CoT, ASTERIX CAT062 or SAPIENT destination with `encoder: goat-transformers` writes its payload with the [goat-transformers](https://github.com/USAREUR-AF/goat-transformers) packs instead of the gateway's own encoder. The native encoder stays the default, as open-billie keeps its native encoder beside the same option ([GOAT_TRANSFORMERS_ENCODER_OPTION.md](https://github.com/USAREUR-AF/open-billie/blob/main/docs/architecture/GOAT_TRANSFORMERS_ENCODER_OPTION.md)).
+**Status: built; the default for CoT and ASTERIX CAT062.** A CoT or ASTERIX CAT062 destination writes its payload with the [goat-transformers](https://github.com/USAREUR-AF/goat-transformers) packs unless it says `encoder: native`; a SAPIENT destination keeps the gateway's own encoder unless it says `encoder: goat-transformers`, because the library does not yet write `track_info`. A CoT destination that names no encoder but sets `time_form`, which only the native encoder writes, keeps the native encoder, so a configuration written before the default changed behaves as before. open-billie keeps the same choice per format ([GOAT_TRANSFORMERS_ENCODER_OPTION.md](https://github.com/USAREUR-AF/open-billie/blob/main/docs/architecture/GOAT_TRANSFORMERS_ENCODER_OPTION.md)).
 
 ```yaml
 destinations:
   - name: tak
     adapter: cot
     address: tak.example.org:8087
-    encoder: goat-transformers     # native (the default) or goat-transformers
+    encoder: native                # goat-transformers (the default for cot and asterix-cat062) or native
 ```
 
 ## How it works
