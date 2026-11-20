@@ -40,6 +40,7 @@ class Derive:
     fn: object = None
     lineno: int = 0
     partial: bool = False  # `any` (0.8): `fn` is given the arguments that are present, at least one
+    positional: bool = False  # `tokens` (0.18 ruling 7): `fn` is given every argument, None for an absent one
 
 
 @dataclass
@@ -111,7 +112,60 @@ _TYPED_FN = {
 # function -> argument count, None for one or more
 _ARG_COUNT = {"copy": 1, "hypot": 2, "bearing": 2, "east_of": 2, "north_of": 2, "neg": 1, "day_seconds": 1,
               "any": None, "not": 1, "parse_int": 1, "text_of": 1, "present": 1, "scale": 1, "offset": 1, "join": None,
-              **derive16.ARG_COUNT}
+              "tokens": None, "has_token": 1, "text_if": 1, **derive16.ARG_COUNT}
+
+# 0.18: whitespace in a derive parameter is space, tab, line feed and carriage return.
+_WS18 = " \t\n\r"
+_SEP_NAMES = {"space": " ", "comma": ",", "colon": ":"}
+
+
+def _parse_sep(text):
+    """-> the separator character of `tokens` and `has_token` (0.18, ruling 9)."""
+    if text in _SEP_NAMES:
+        return _SEP_NAMES[text]
+    if len(text) != 1 or text in ":," or text in _WS18:
+        raise ValueError("a separator is one character other than ':', ',' or whitespace, or space, comma or colon;"
+                         " got %r" % text)
+    return text
+
+
+def _parse_token(tok, sep):
+    if not tok or any(c in ":," or c in _WS18 or c == sep for c in tok):
+        raise ValueError("a token is one or more characters other than ':', ',', whitespace and the separator;"
+                         " got %r" % tok)
+    return tok
+
+
+def _parse_param18(name, param):
+    """-> the parsed parameter of `tokens`, `has_token` or `text_if` (0.18).
+    Raises ValueError."""
+    if name == "text_if":
+        if not param or any(c in _WS18 for c in param):
+            raise ValueError("text_if takes one or more characters other than whitespace, got %r" % param)
+        return param
+    sep_text, colon, rest = param.partition(":")
+    if not colon:
+        raise ValueError("%s takes <sep>:<token%s>" % (name, "s" if name == "tokens" else ""))
+    sep = _parse_sep(sep_text)
+    if name == "has_token":
+        return sep, _parse_token(rest, sep)
+    toks = rest.split(",")
+    for t in toks:
+        _parse_token(t, sep)
+    if len(set(toks)) != len(toks):
+        raise ValueError("tokens names a token twice in %r" % rest)
+    return sep, toks
+
+
+def _tokens_fn(sep, toks):
+    def run(*args):  # one per token; None for an absent argument (ruling 7)
+        out = [t for t, a in zip(toks, args) if a is not None and a != 0]
+        return sep.join(out) if out else None
+    return run
+
+
+def _has_token_fn(sep, tok):
+    return lambda a: 1 if tok in [p for p in a.split(sep) if p] else 0
 
 
 def _check_derive_text(function, n):
@@ -126,6 +180,10 @@ def _check_derive_text(function, n):
             raise ValueError("%s takes no parameter" % name)
     elif not colon:
         raise ValueError("%s needs a parameter" % name)
+    elif name in ("tokens", "has_token", "text_if"):
+        parsed = _parse_param18(name, param)
+        if name == "tokens" and n != len(parsed[1]):
+            raise ValueError("tokens names %d token(s) and takes as many arguments, got %d" % (len(parsed[1]), n))
     elif name == "scale":
         parse_factor(param)
     elif name == "offset":
@@ -180,6 +238,23 @@ def _build_derive(function, target_type, arg_types):
         if target_type not in fns or any(t != target_type for t in arg_types):
             raise ValueError("%s needs a target and two arguments that are all int or all float" % name)
         return fns[target_type]
+    if name in ("tokens", "has_token", "text_if") and colon:  # 0.18
+        parsed = _parse_param18(name, param)
+        if name == "tokens":
+            if n != len(parsed[1]):
+                raise ValueError("tokens names %d token(s), got %d argument(s)" % (len(parsed[1]), n))
+            if target_type != "string" or any(t != "int" for t in arg_types):
+                raise ValueError("tokens needs int arguments and a string target")
+            return _tokens_fn(*parsed)
+        if n != 1:
+            raise ValueError("%s takes 1 argument(s), got %d" % (name, n))
+        if name == "has_token":
+            if target_type != "int" or arg_types[0] != "string":
+                raise ValueError("has_token needs a string argument and an int target")
+            return _has_token_fn(*parsed)
+        if target_type != "string" or arg_types[0] != "int":
+            raise ValueError("text_if needs an int argument and a string target")
+        return lambda a, text=parsed: text if a != 0 else None
     if name == "copy":
         if n != 1:
             raise ValueError("copy takes 1 argument(s), got %d" % n)
@@ -262,7 +337,8 @@ def _check_derives(module, lines, models, source):
             fn = _build_derive(function, target_type, arg_types)
         except ValueError as e:
             raise BadDirective("derive %s %s at %s: %s" % (target, function, where, e))
-        module.derives.append(Derive(target, function, arg_keys, fn, lineno, partial=function == "any"))
+        module.derives.append(Derive(target, function, arg_keys, fn, lineno, partial=function == "any",
+                                      positional=function.startswith("tokens:")))
 
 
 def scan_uses(text):

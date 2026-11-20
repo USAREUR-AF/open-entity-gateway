@@ -13,13 +13,14 @@ from .errors import (
 from .transforms import (
     bits_len_allowed, build_bits_transform, read_int_text, read_uint_text, transform_valid_on, v15_family,
 )
+from . import uper
 
 (T_FIELD, T_CONST, T_PAD, T_ALIGN, T_WHEN, T_PRESENCE, T_IF, T_OPT, T_GROUP, T_CHAIN, T_LENGTH,
- T_WHOLE) = range(12)
+ T_WHOLE, T_EXT, T_CHOICE, T_ALT) = range(15)
 
-GROUP_MODES = ("count", "while", "more", "fx")
+GROUP_MODES = ("count", "while", "more", "fx", "size")
 _HEADER = ("format", "version", "wire", "layout", "bit_order", "word_bytes", "distribution", "source", "uses",
-           "map", "typemap", "root", "armor")
+           "map", "typemap", "root", "armor", "encoding")
 _SINGLE = ("layout", "bit_order")
 
 
@@ -36,10 +37,16 @@ class Node:
     chain     `parts`: the lines between `fx` lines; `ends_fx`: the last line is `fx`
     length    `length`, `unit` ("bytes" | "bits"), `plus`, `body`
     whole     `length`, `plus`
+    ext       `body` (0.19)
+    choice    `n`, `ext`, `alts`: the `alt` nodes in line order, `index`: alt index -> node (0.19)
+    alt       `value` (its index), `body`
+    A field with a UPER locator has `uper` (a uper.Loc) and `length` None; a
+    `size` group has `lb` and `ub` (both None with no size constraint).
     """
 
     __slots__ = ("t", "lineno", "length", "value", "bindings", "name", "named", "conds", "body", "list", "mode",
-                 "scope", "parts", "ends_fx", "unit", "plus", "locator")
+                 "scope", "parts", "ends_fx", "unit", "plus", "locator", "uper", "n", "ext", "alts", "index",
+                 "lb", "ub")
 
     is_field = False
     is_const = False
@@ -50,8 +57,21 @@ class Node:
         self.lineno = lineno
         self.length = None
         self.locator = None
+        self.uper = None
         for k, v in kw.items():
             setattr(self, k, v)
+
+
+def children(nd):
+    """The line lists inside a block node (none for a line that is not a block)."""
+    t = nd.t
+    if t == T_IF or t == T_OPT or t == T_LENGTH or t == T_EXT:
+        return (nd.body,)
+    if t == T_CHAIN:
+        return nd.parts
+    if t == T_CHOICE:
+        return [a.body for a in nd.alts]
+    return ()
 
 
 class GroupNode(Node):
@@ -121,11 +141,8 @@ class Body:
                 if t == T_GROUP:
                     for b in nd.scope.bodies():
                         yield b
-                elif t == T_IF or t == T_OPT or t == T_LENGTH:
-                    for b in walk(nd.body):
-                        yield b
-                elif t == T_CHAIN:
-                    for part in nd.parts:
+                else:
+                    for part in children(nd):
                         for b in walk(part):
                             yield b
 
@@ -145,10 +162,8 @@ class Body:
                 elif t == T_GROUP:
                     add(prefix + nd.list + "[]")
                     nd.scope.model_keys(add, prefix + nd.list + "[].")
-                elif t == T_IF or t == T_OPT or t == T_LENGTH:
-                    walk(nd.body)
-                elif t == T_CHAIN:
-                    for part in nd.parts:
+                else:
+                    for part in children(nd):
                         walk(part)
 
         walk(self.common)
@@ -162,7 +177,7 @@ class _Frame:
     __slots__ = ("what", "node", "nodes", "lineno", "presences", "body")
 
     def __init__(self, what, node, nodes, lineno, body=None):
-        self.what = what      # "group" | "if" | "opt" | "chain" | "length"
+        self.what = what      # "group" | "if" | "opt" | "chain" | "length" | "ext" | "choice"
         self.node = node
         self.nodes = nodes    # where the lines of the block go (a chain: its current part)
         self.lineno = lineno
@@ -181,7 +196,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
     `missing-distribution`, `missing-source`."""
     from .packdef import (
         BIT_ORDERS, HEADER_ONCE, NEEDS_WIRE, TEXT_DIRECTIVES, Default, Field, Pack, _check_transform, _Deferred,
-        _LineBad, armor_line, check_armor, line_head, parse_absent, set_bit_order,
+        _LineBad, armor_line, check_armor, check_encoding, line_head, parse_absent, set_bit_order,
     )
 
     seen = {}          # the header values (`line_head`)
@@ -202,6 +217,8 @@ def parse_seq_pack_text(text, *, source="pack.def"):
     armor = []         # 0.14: the `armor` lines, checked after the file (`check_armor`)
     any_kind = False   # a `kind` line read, in any body (ruling 11 of 0.14)
     wholes = []        # the `length ... whole` nodes, refused under `armor sixbit` (ruling 3 of 0.14)
+    encoding = []      # 0.19: the `encoding` lines, checked after the file (`check_encoding`)
+    uper_lines = []    # 0.19: (lineno, BadDirective) for each UPER line, refused when the pack is not UPER
 
     def line_bad(msg_text, lineno, locator=None):
         """A line check of ruling 5b of 0.11 (steps 7 to 10)."""
@@ -251,6 +268,78 @@ def parse_seq_pack_text(text, *, source="pack.def"):
             raise bad("%s takes a length of 1 to 64 bits, got %r" % (what, text), lineno, text)
         return n
 
+    def read_options(options, lineno, len_text):
+        """-> {option: value}. The syntax of the options is a line check (step 9
+        of ruling 5b of 0.11); `optional` in a sequential pack is not."""
+        opts = {}
+        i = 0
+        while i < len(options):
+            opt = options[i]
+            if opt == "optional":
+                raise bad("the field option 'optional' in a sequential pack", lineno, len_text)
+            if opt not in ("via", "swap", "trim", "absent", "with"):
+                raise line_bad("unknown field option %r" % opt, lineno, len_text)
+            if opt in opts:
+                raise line_bad("field option %r is given twice" % opt, lineno, len_text)
+            if opt in ("via", "absent", "with"):  # the token after `absent` is its argument (ruling 11 of 0.9)
+                if i + 1 >= len(options):
+                    raise line_bad("field option %r takes %s" % (
+                        opt, "a table name" if opt == "via" else "a model key" if opt == "with" else "a value"),
+                        lineno, len_text)
+                opts[opt] = options[i + 1]
+                i += 2
+            else:
+                opts[opt] = True
+                i += 1
+        return opts
+
+    def uper_line(what, lineno, locator=None):
+        """A line of a UPER pack: refused after the file is read when the pack is not one (ruling 9 of 0.19)."""
+        uper_lines.append((lineno, bad("%s is a line of a UPER pack ('encoding uper'), which this pack is not"
+                                       % what, lineno, locator)))
+
+    def make_uper_field(key, len_text, tname, options, lineno, also=False):
+        """A field with a UPER locator (0.19) -> (Field, uper.Loc), or (None, None).
+        As the line is read: the transform's name and parameters (step 7 of
+        ruling 5b of 0.11) and the syntax of the options (step 9). After the
+        file is read: the locator against the table of 0.19, the transform
+        against the locator ("another transform"), `swap` and `trim` (ruling
+        10), `absent` (ruling 22), and whether the pack is a UPER pack (ruling 9)."""
+        where = "%s:%d" % (source, lineno)
+        if not also:
+            _check_transform(seen.get("format"), tname, len_text, where)
+            uper_line("a UPER locator (%r)" % len_text, lineno, len_text)
+        opts = read_options(options, lineno, len_text)
+        failed = False
+        for opt in ("swap", "trim", "absent"):
+            if opt in opts:
+                deferred.append((lineno, bad("field option %r on a UPER locator" % opt, lineno, len_text)))
+                failed = True
+        try:
+            loc = uper.parse_locator(len_text)
+        except ValueError as e:
+            deferred.append((lineno, bad(str(e), lineno, len_text)))
+            return None, None
+        if not uper.takes(loc.form, tname):
+            deferred.append((lineno, bad("the %s locator %r does not take transform %r" % (loc.form, len_text, tname),
+                                         lineno, len_text)))
+            return None, None
+        try:
+            transform = uper.build_transform(loc.form, tname)
+        except ValueError as e:
+            deferred.append((lineno, bad("transform %r: %s" % (tname, e), lineno, len_text)))
+            return None, None
+        if failed:
+            return None, None
+        f = Field(key, len_text, transform, (0, 0, 0), lineno, via=opts.get("via"))
+        key_refs.append((key, f))
+        if "with" in opts:  # 0.18 on every wire: checked as a `requires` key is
+            f.with_key = opts["with"]
+            key_refs.append((f.with_key, None))
+        if f.via is not None:
+            via_fields.append(f)
+        return f, loc
+
     def make_field(key, len_text, tname, options, lineno, also=False):
         """The line checks of ruling 5b of 0.11 in their order (the
         transform, the locator, the options, the values of `absent`), then the
@@ -268,25 +357,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                                  % (len_text, where), format=fmt, locator=len_text)
         else:
             length = _uint(len_text)
-        opts = {}
-        i = 0
-        while i < len(options):
-            opt = options[i]
-            if opt == "optional":
-                raise bad("the field option 'optional' in a sequential pack", lineno, len_text)
-            if opt not in ("via", "swap", "trim", "absent"):
-                raise line_bad("unknown field option %r" % opt, lineno, len_text)
-            if opt in opts:
-                raise line_bad("field option %r is given twice" % opt, lineno, len_text)
-            if opt == "via" or opt == "absent":  # the token after `absent` is its argument (ruling 11 of 0.9)
-                if i + 1 >= len(options):
-                    raise line_bad("field option %r takes %s" % (opt, "a table name" if opt == "via" else "a value"),
-                              lineno, len_text)
-                opts[opt] = options[i + 1]
-                i += 2
-            else:
-                opts[opt] = True
-                i += 1
+        opts = read_options(options, lineno, len_text)
         if not transform_valid_on(tname, "bits"):
             deferred.append((lineno, bad("transform %r is not valid on the bits wire" % tname, lineno, len_text)))
             return None
@@ -321,12 +392,19 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                 deferred.append((lineno, d.err))
                 return None
         key_refs.append((key, f))
+        if "with" in opts:  # 0.18: checked as a `requires` key is
+            f.with_key = opts["with"]
+            key_refs.append((f.with_key, None))
         if f.via is not None:
             via_fields.append(f)
         return f
 
     def value_node(t, kw, args, lineno):
         text = args[0]
+        if text.startswith(uper.PREFIXES):
+            # rulings 9 and 10 of 0.19: `when` and `const` take bit lengths only; a
+            # UPER locator is not a locator form of step 8, so it is refused after the file
+            raise bad("a '%s' takes a bit length, not the UPER locator %r" % (kw, text), lineno, text)
         if ":" not in text and (_uint(text) is None or _uint(text) == 0):  # ruling 5a of 0.11
             raise BadLocator("bad bit length %r at %s:%d: a sequential locator is a bit length of 1 or more"
                              % (text, source, lineno), format=seen.get("format"), locator=text)
@@ -361,6 +439,8 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                 wired = kw
             if stack and kw in _HEADER:
                 raise bad("%r inside a block" % kw, lineno)
+            if stack and stack[-1].what == "choice" and not stack[-1].node.alts and kw not in ("alt", "end"):
+                deferred.append((lineno, bad("a line between 'choice' and its first 'alt'", lineno)))
             body = body_of()
 
             if kw in HEADER_ONCE:
@@ -377,11 +457,46 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                         raise bad("a second layout, %r, in a sequential pack" % args[0], lineno, "layout")
                     if wired is not None:  # ruling 5b of 0.11
                         raise bad("'layout sequential' after a %r line" % wired, lineno, "layout")
-            elif kw in TEXT_DIRECTIVES or kw == "tag" or kw == "key":
-                # `delimiter`, `start`, `checksum` (0.10); `tag`, `key`, `checksum sum16` (0.13): another wire's
+            elif kw in TEXT_DIRECTIVES or kw == "tag" or kw == "key" or kw == "element":
+                # `delimiter`, `start`, `checksum` (0.10); `tag`, `key`, `checksum sum16` (0.13);
+                # `element` (0.18, xml): another wire's
                 text_dirs.append((lineno, bad("%r is a directive of another wire" % kw, lineno, kw)))
             elif kw == "armor":
                 armor_line(args, armor, any_kind, lineno)
+            elif kw == "encoding":  # 0.19: checked after the file is read (`check_encoding`)
+                encoding.append((args[0], lineno, any_kind))
+            elif kw == "ext":
+                uper_line("'ext'", lineno)
+                nd = Node(T_EXT, lineno, body=[])
+                target(body).append(nd)
+                stack.append(_Frame("ext", nd, nd.body, lineno))
+            elif kw == "choice":
+                uper_line("'choice'", lineno)
+                n = uper.parse_number(args[0])
+                if n is None or not 1 <= n <= 65536:
+                    deferred.append((lineno, bad("'choice' takes 1 to 65536 alternatives, got %r" % args[0], lineno)))
+                    n = None
+                if len(args) == 2 and args[1] != "ext":
+                    deferred.append((lineno, bad("a 'choice' line is: choice <n> [ext]", lineno)))
+                nd = Node(T_CHOICE, lineno, n=n, ext=len(args) == 2, alts=[], index={})
+                target(body).append(nd)
+                stack.append(_Frame("choice", nd, [], lineno))
+            elif kw == "alt":
+                if not stack or stack[-1].what != "choice":
+                    raise bad("'alt' outside a 'choice'", lineno)
+                fr = stack[-1]
+                ch = fr.node
+                i = uper.parse_number(args[0])
+                if i is None or (ch.n is not None and i >= ch.n):
+                    deferred.append((lineno, bad("'alt' index %r is outside 0..n-1 of its choice" % args[0], lineno)))
+                elif i in ch.index:
+                    deferred.append((lineno, bad("'alt' index %d is given twice" % i, lineno)))
+                alt = Node(T_ALT, lineno, value=i, body=[])
+                ch.alts.append(alt)
+                if i is not None and i not in ch.index:
+                    ch.index[i] = alt
+                fr.nodes = alt.body
+                fr.presences = {}  # each `alt` is a block of its own for presence names (ruling 21 of 0.19)
             elif kw == "word_bytes":
                 deferred.append((lineno, bad("'word_bytes' is not used in a sequential pack", lineno, "word_bytes")))
             elif kw == "root":
@@ -433,9 +548,13 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                 else:
                     body.cur.whens.append(nd)
             elif kw == "field":
-                f = make_field(args[0], args[1], args[2], args[3:], lineno)
+                if args[1].startswith(uper.PREFIXES):  # 0.19
+                    f, loc = make_uper_field(args[0], args[1], args[2], args[3:], lineno)
+                else:
+                    f, loc = make_field(args[0], args[1], args[2], args[3:], lineno), None
                 if f is not None:
-                    nd = Node(T_FIELD, lineno, length=f.loc[2], bindings=[f], locator=args[1])
+                    nd = Node(T_FIELD, lineno, length=None if loc is not None else f.loc[2], bindings=[f],
+                              locator=args[1], uper=loc)
                     target(body).append(nd)
                     last_field = (nd, args[2], args[3:])
             elif kw == "also":
@@ -446,7 +565,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                 carried = []
                 k = 0
                 while k < len(options):
-                    if options[k] in ("via", "absent"):
+                    if options[k] in ("via", "absent", "with"):  # `with` is the line's own (ruling 5 of 0.18)
                         if options[k] == "absent":
                             carried.extend(options[k:k + 2])
                         k += 2
@@ -457,7 +576,10 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                 extra = args[1:]
                 if extra and (len(extra) != 2 or extra[0] != "via"):
                     raise bad("an 'also' line is: also <key> [via <table>]", lineno)
-                f = make_field(args[0], nd.locator, tname, carried + extra, lineno, also=True)
+                if nd.uper is not None:  # the `also` key shares the UPER locator and its transform
+                    f = make_uper_field(args[0], nd.locator, tname, carried + extra, lineno, also=True)[0]
+                else:
+                    f = make_field(args[0], nd.locator, tname, carried + extra, lineno, also=True)
                 if f is not None:
                     nd.bindings.append(f)
                 last_field = prev_field
@@ -482,28 +604,40 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                     twice = name in body.presences or name in table
                 if twice:  # ruling 12 of 0.8
                     raise bad("presence %r is declared twice in one block" % name, lineno)
+                if stack and stack[-1].what == "ext" and stack[-1].nodes:  # ruling 15 of 0.19
+                    raise bad("a 'presence' line inside an 'ext' block is its first line", lineno)
                 length = None if args[1] == "fx" else bit_len(args[1], "a 'presence'", lineno)
                 nd = Node(T_PRESENCE, lineno, name=name, length=length, named=set(), locator=args[1])
                 table[name] = nd
                 target(body).append(nd)
             elif kw == "if":
+                # 0.8's `if` (presence names); a 0.17 gate locator here is
+                # `bad-directive` after the file. A failing `if` still opens its
+                # block, so that its `end` closes it and not an enclosing block.
                 conds = []
+                failure = None
                 for term in args:
                     neg = term.startswith("!")
                     name, dot, bit = (term[1:] if neg else term).rpartition(".")
                     n = _uint(bit)
                     if not dot or not name or n is None or n < 1:
-                        raise bad("an 'if' term is [!]<name>.<i> with i from 1, got %r" % term, lineno)
+                        failure = bad("an 'if' term is [!]<name>.<i> with i from 1, got %r" % term, lineno)
+                        break
                     p = find_presence(name)
                     if p is None:
-                        raise bad("'if' names presence %r, which is not visible here" % name, lineno)
+                        failure = bad("'if' names presence %r, which is not visible here" % name, lineno)
+                        break
                     if p.length is not None and n > p.length:
-                        raise bad("'if' names bit %d of presence %r, which has %d bit(s)" % (n, name, p.length), lineno)
+                        failure = bad("'if' names bit %d of presence %r, which has %d bit(s)"
+                                      % (n, name, p.length), lineno)
+                        break
                     p.named.add(n)
                     conds.append((p, n, neg))
                 nd = Node(T_IF, lineno, conds=conds, body=[])
                 target(body).append(nd)
                 stack.append(_Frame("if", nd, nd.body, lineno))
+                if failure is not None:
+                    raise failure
             elif kw == "opt":
                 nd = Node(T_OPT, lineno, body=[])
                 target(body).append(nd)
@@ -555,7 +689,19 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                 name, mode = args[0], args[1]
                 if ":" in mode:
                     raise line_bad("a positional group locator (%r) in a sequential pack" % mode, lineno, mode)
-                if mode not in GROUP_MODES or len(args) != (3 if mode == "count" else 2):
+                lb = ub = None
+                if mode == "size":  # 0.19
+                    if len(args) not in (2, 4):
+                        raise bad("a 'group ... size' line is: group <list> size [<lb> <ub>]", lineno, mode)
+                    uper_line("'group ... size'", lineno, mode)
+                    if len(args) == 4:
+                        lb, ub = uper.parse_number(args[2]), uper.parse_number(args[3])
+                        if lb is None or ub is None or not 0 <= lb <= ub < 65536:  # ruling 12 of 0.19
+                            # after the file is read; the block is still opened, so that its `end` closes it
+                            deferred.append((lineno, bad("'size' takes 0 <= lb <= ub < 65536, got %s %s"
+                                                         % (args[2], args[3]), lineno, mode)))
+                            lb, ub = 0, 0
+                elif mode not in GROUP_MODES or len(args) != (3 if mode == "count" else 2):
                     raise bad("a sequential 'group' line is: group <list> count <len> | while | more | fx", lineno, mode)
                 length = bit_len(args[2], "a group 'count'", lineno) if mode == "count" else None
                 # Ruling 23 of 0.8: a list in two groups of one scope is allowed
@@ -568,6 +714,8 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                         break
                     if fr.what == "if" or fr.what == "opt":
                         blocks.append(fr.node)
+                    elif fr.what == "choice" and fr.node.alts:  # ruling 20 of 0.19: different alts
+                        blocks.append(fr.node.alts[-1])
                 lists = body.cur.lists if body.cur is not None else body.lists
                 for table in ((body.lists, lists) if lists is not body.lists else (lists,)):
                     for other in table.get(name, ()):
@@ -575,7 +723,8 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                             raise bad("list %s is mapped by two groups of one scope that are not in different "
                                       "'if' or 'opt' blocks" % name, lineno, mode)
                 lists.setdefault(name, []).append(blocks)
-                nd = GroupNode(T_GROUP, lineno, list=name, mode=mode, length=length, scope=Body(), locator=mode)
+                nd = GroupNode(T_GROUP, lineno, list=name, mode=mode, length=length, scope=Body(), locator=mode,
+                               lb=lb, ub=ub)
                 target(body).append(nd)
                 key_refs.append((name, nd))
                 stack.append(_Frame("group", nd, None, lineno, body=nd.scope))
@@ -590,6 +739,8 @@ def parse_seq_pack_text(text, *, source="pack.def"):
                     if len(parts) > 1 and not parts[-1]:  # the chain ends with an `fx` line
                         parts.pop()
                         fr.node.ends_fx = True
+                elif fr.what == "choice" and not fr.node.alts:  # ruling 19 of 0.19
+                    deferred.append((fr.lineno, bad("a 'choice' with no 'alt' line", fr.lineno)))
         except _LineBad:
             raise
         except (BadDirective, DuplicateKind) as e:  # not a line check: after the file (ruling 5b of 0.11)
@@ -608,6 +759,10 @@ def parse_seq_pack_text(text, *, source="pack.def"):
             fr.body.close()
     close_body(msg, 0)
     armor_value = check_armor(armor, "bits", once.get("bit_order"), deferred, source, name)
+    is_uper = check_encoding(encoding, "bits", True, once.get("bit_order"), armor_value, deferred, source,
+                             name) == "uper"
+    if not is_uper:  # ruling 9 of 0.19
+        deferred.extend(uper_lines)
     if armor_value == "sixbit":
         for nd in wholes:
             deferred.append((nd.lineno, bad("'length ... whole' under 'armor sixbit': the armored text has no "
@@ -631,6 +786,7 @@ def parse_seq_pack_text(text, *, source="pack.def"):
     )
     pack.layout = "sequential"
     pack.seq = msg
+    pack.uper = is_uper
     set_bit_order(pack)
     for lineno, (native, cot) in typemap:
         if native in pack.native_to_cot or cot in pack.cot_to_native:

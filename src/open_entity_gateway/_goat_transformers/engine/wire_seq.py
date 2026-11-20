@@ -23,11 +23,21 @@ after the last line, not rounded to a byte, zero-filled to a multiple of 6.
 from .entity import Entity, Item, _via_decode, _via_encode
 from .errors import MalformedWire, NoKind, TransformDecodeFailure, TransformEncodeFailure
 from .seqdef import (
-    T_ALIGN, T_CHAIN, T_CONST, T_FIELD, T_GROUP, T_IF, T_LENGTH, T_OPT, T_PAD, T_PRESENCE, T_WHEN, T_WHOLE,
+    T_ALIGN, T_CHAIN, T_CHOICE, T_CONST, T_EXT, T_FIELD, T_GROUP, T_IF, T_LENGTH, T_OPT, T_PAD, T_PRESENCE,
+    T_WHEN, T_WHOLE, children,
 )
+from .uper import INT64_MAX, twos_octets, uint_octets
 from .wire_bits import Message, _hex_to_bytes, _swap_int, armored_message, armored_text, raw_int, sixbit_values
 
 _NONE = frozenset()
+
+
+class _TooBig(Exception):
+    """A UPER value the engine does not hold: `transform-decode` (rulings 5 and 19 of 0.19)."""
+
+
+def _twos(raw, nbits):
+    return raw - (1 << nbits) if nbits and raw >> (nbits - 1) else raw
 
 
 # --- decode ----------------------------------------------------------------
@@ -126,6 +136,10 @@ class _Reader:
                 self.chain(nd, sc)
             elif t == T_LENGTH:
                 self.length(nd, sc)
+            elif t == T_EXT:
+                self.ext(nd, sc)
+            elif t == T_CHOICE:
+                self.choice(nd, sc)
             else:
                 self.whole(nd)
 
@@ -137,13 +151,149 @@ class _Reader:
         self.pos = pos + nd.length
         return self.msg.uint(pos, nd.length) == nd.value
 
+    # -- UPER (0.19) --
+
+    def at_soft_end(self):
+        """True when the cursor is at or after the end of a `length` extent: a
+        line that starts there reads as absent."""
+        return bool(self.soft) and self.pos >= self.soft[-1]
+
+    def need(self, n, what):
+        """-> the next `n` bits as an unsigned number; reading past the input or
+        the extent is `malformed-wire`."""
+        if n == 0:
+            return 0
+        start = self.take(n, what)
+        if start is None:
+            raise self.short(what)
+        return self.msg.uint(start, n)
+
+    def constrained(self, lb, ub, what):
+        rng = ub - lb
+        raw = self.need(rng.bit_length(), what)
+        if raw > rng:
+            raise MalformedWire("%s: %d is outside its constraint %d..%d" % (what, lb + raw, lb, ub),
+                                format=self.pack.name)
+        return lb + raw
+
+    def length_det(self, what):
+        if not self.need(1, what):
+            return self.need(7, what)
+        if not self.need(1, what):
+            return self.need(14, what)
+        raise MalformedWire("%s: a fragmented length (first bits 11)" % what, format=self.pack.name)
+
+    def int_octets(self, what):
+        """-> (count, raw) of an integer read from octets. The checks run in the
+        order of ruling 20 of 0.19: the input holds the octets, the count is
+        not 0 (both `malformed-wire`); the caller checks that the value fits."""
+        n = self.length_det(what)
+        raw = self.need(8 * n, what)
+        if n == 0:
+            raise MalformedWire("%s: an integer of 0 octets" % what, format=self.pack.name)
+        return n, raw
+
+    def normally_small(self, what):
+        if not self.need(1, what):
+            return self.need(6, what)
+        n, raw = self.int_octets(what)
+        if n > 8:
+            raise _TooBig("%s: a number of %d octets" % (what, n))
+        return raw
+
+    def uper_raw(self, loc, what):
+        """-> what the transform of a UPER locator decodes: an integer, a list of
+        7-bit codes, or bytes."""
+        form = loc.form
+        if form == "int":
+            if loc.ub is not None and not (loc.ext and self.need(1, what)):
+                return self.constrained(loc.lb, loc.ub, what)
+            n, raw = self.int_octets(what)
+            if n > 8:
+                raise _TooBig("%s: an integer of %d octets" % (what, n))
+            if loc.ub is not None or loc.lb is None:
+                return _twos(raw, 8 * n)
+            v = loc.lb + raw
+            if v > INT64_MAX:
+                raise _TooBig("%s: %d does not fit a signed 64-bit integer" % (what, v))
+            return v
+        if form == "enum":
+            if loc.ext and self.need(1, what):
+                v = loc.n + self.normally_small(what)
+                if v > INT64_MAX:
+                    raise _TooBig("%s: extension index %d does not fit a signed 64-bit integer" % (what, v))
+                return v
+            return self.constrained(0, loc.n - 1, what)
+        count = self.constrained(loc.lb, loc.ub, what) if loc.ub is not None else self.length_det(what)
+        if form == "chars":
+            raw = self.need(7 * count, what)
+            return [(raw >> (7 * (count - 1 - k))) & 0x7F for k in range(count)]
+        return self.need(8 * count, what).to_bytes(count, "big")
+
+    def skip_open_type(self, what):
+        n = self.length_det(what)
+        self.need_skip(8 * n, what)
+
+    def need_skip(self, n, what):
+        if n and self.take(n, what) is None:
+            raise self.short(what)
+
+    def ext(self, nd, sc):
+        start = self.take(1, "the extension bit of an 'ext' block")
+        if start is None:
+            return
+        self.run(nd.body, sc)
+        if not self.msg.uint(start, 1):
+            return
+        what = "the extension additions of an 'ext' block"
+        if not self.need(1, what):  # ruling 16 of 0.19
+            m = self.need(6, what) + 1
+        else:
+            m = self.length_det(what)
+        bits = self.need(m, what)
+        for k in range(m):
+            if (bits >> (m - 1 - k)) & 1:
+                self.skip_open_type(what)
+
+    def choice(self, nd, sc):
+        what = "the index of a 'choice'"
+        if nd.ext:
+            start = self.take(1, "the extension bit of a 'choice'")
+            if start is None:
+                return
+            if self.msg.uint(start, 1):
+                try:
+                    self.normally_small(what)
+                except _TooBig as e:  # no key holds it: the decode fails (ruling 20 of 0.19)
+                    raise TransformDecodeFailure(str(e), format=self.pack.name, locator="choice %d" % nd.n)
+                self.skip_open_type("the open type of an extension alternative")
+                return
+        elif self.at_soft_end():
+            return
+        i = self.constrained(0, nd.n - 1, what)
+        alt = nd.index.get(i)
+        if alt is None:
+            raise MalformedWire("the 'choice' index %d has no 'alt'" % i, format=self.pack.name)
+        self.run(alt.body, sc)
+
     def field(self, nd, sc):
+        if nd.uper is not None:
+            if self.at_soft_end():
+                return
+            try:
+                raw = self.uper_raw(nd.uper, "field %s (%s)" % (nd.bindings[0].key, nd.locator))
+            except _TooBig as e:
+                for f in nd.bindings:
+                    if f.key not in sc.fields:
+                        self.fail(sc, f.key, f.locator, str(e), False)
+                return
+            self.values(nd, sc, raw)
+            return
         length = nd.length
         start = self.take(length, "a field of %d bit(s)" % length)
         if start is None:
             return
         msg = self.msg
-        n2c = self.pack.native_to_cot
         first = nd.bindings[0]
         as_bytes = getattr(first.transform, "as_bytes", False)
         if as_bytes:
@@ -156,10 +306,15 @@ class _Reader:
             raw = msg.uint(start, length)
             if first.swap:
                 raw = _swap_int(raw, length)
-        fields = sc.fields
         if first.absent is not None:  # a sentinel (0.9): compared with the bits as an integer, after `swap`
             if raw_int(raw, msg.msb) in first.absent:  # `sixbit` too (ruling 12 of 0.14)
                 return
+        self.values(nd, sc, raw)
+
+    def values(self, nd, sc, raw):
+        """Decode the raw value of a field line into each of its keys."""
+        n2c = self.pack.native_to_cot
+        fields = sc.fields
         for f in nd.bindings:  # the line's key and each `also` key: one transform, the table of each
             key = f.key
             if key in fields:
@@ -288,11 +443,17 @@ class _Reader:
         mode = nd.mode
         msg = self.msg
         items = []
-        if mode == "count":
-            start = self.take(nd.length, "the count of group %s" % nd.list)
-            if start is None:
-                return
-            n = msg.uint(start, nd.length)
+        if mode == "count" or mode == "size":
+            if mode == "size":
+                if self.at_soft_end():
+                    return
+                what = "the count of group %s" % nd.list
+                n = self.constrained(nd.lb, nd.ub, what) if nd.ub is not None else self.length_det(what)
+            else:
+                start = self.take(nd.length, "the count of group %s" % nd.list)
+                if start is None:
+                    return
+                n = msg.uint(start, nd.length)
             self.replaces(nd, sc)
             if self.left is not None and n > self.left:  # before any item is read (ruling 7d of 0.11)
                 raise self.over(nd, n)
@@ -426,6 +587,20 @@ def select_kind(pack, body, kind_ref, fields, lists, item=False):
     raise NoKind("the entity has the required keys of no kind", format=pack.name)
 
 
+def _live(bindings, ctx):
+    """The bindings of a field line that may write: a line with `with` whose
+    key the scope does not hold is absent everywhere (0.18, ruling 1)."""
+    out = None
+    for k, f in enumerate(bindings):
+        w = f.with_key
+        if w is not None and w not in ctx.fields and not ctx.lists.get(w):
+            if out is None:
+                out = list(bindings[:k])
+        elif out is not None:
+            out.append(f)
+    return bindings if out is None else out
+
+
 class _Writer:
     def __init__(self, pack):
         self.pack = pack
@@ -457,21 +632,20 @@ class _Writer:
 
     def has_content(self, nodes, ctx):
         """True when the lines would write a present key (a key with a default
-        counts, ruling 2 of 0.8) or a non-empty list."""
+        counts, ruling 2 of 0.8, except in a UPER pack, ruling 19 of 0.19) or a
+        non-empty list, looked for in every nested block (ruling 3 of 0.19)."""
+        defaults = () if self.pack.uper else ctx.defaults
         for nd in nodes:
             t = nd.t
             if t == T_FIELD:
-                for f in nd.bindings:
-                    if f.key in ctx.fields or f.key in ctx.defaults:
+                for f in _live(nd.bindings, ctx):
+                    if f.key in ctx.fields or f.key in defaults:
                         return True
             elif t == T_GROUP:
                 if ctx.lists.get(nd.list):
                     return True
-            elif t == T_IF or t == T_OPT or t == T_LENGTH:
-                if self.has_content(nd.body, ctx):
-                    return True
-            elif t == T_CHAIN:
-                for part in nd.parts:
+            else:
+                for part in children(nd):
                     if self.has_content(part, ctx):
                         return True
         return False
@@ -488,10 +662,8 @@ class _Writer:
                 if named and self.has_content(nd.body, ctx):
                     bits.update(named)
                 self.presence_bits(p, nd.body, ctx, bits)
-            elif t == T_OPT or t == T_LENGTH:
-                self.presence_bits(p, nd.body, ctx, bits)
-            elif t == T_CHAIN:
-                for part in nd.parts:
+            elif t == T_OPT or t == T_LENGTH or t == T_CHAIN or t == T_EXT or t == T_CHOICE:
+                for part in children(nd):
                     self.presence_bits(p, part, ctx, bits)
             elif t == T_GROUP:
                 for item in ctx.lists.get(nd.list) or ():
@@ -570,29 +742,153 @@ class _Writer:
                     raise self.fail("a length of %d does not fit its %d bit(s)" % (stated, nd.length), nd)
                 if stated:
                     self.ops.append((at, nd.length, stated))
+            elif t == T_EXT:  # the extension bit 0, then the root components (0.19)
+                self.pos += 1
+                self.emit(nd.body, ctx)
+            elif t == T_CHOICE:  # the first alt with content, else the first alt (0.19)
+                for alt in nd.alts:
+                    if self.has_content(alt.body, ctx):
+                        break
+                else:
+                    alt = nd.alts[0]
+                if nd.ext:
+                    self.pos += 1
+                self.put_constrained(0, nd.n - 1, alt.value)
+                self.emit(alt.body, ctx)
             else:  # whole: written when the message is complete
                 self.wholes.append((self.pos, nd))
                 self.pos += nd.length
 
+    # -- UPER (0.19) --
+
+    def put_constrained(self, lb, ub, v):
+        self.put((ub - lb).bit_length(), v - lb)
+
+    def put_length(self, n, nd, what):
+        """A length determinant; 16384 or more would be fragmented: `transform-encode`."""
+        if n < 128:
+            self.put(8, n)
+        elif n < 16384:
+            self.put(16, 0x8000 | n)
+        else:
+            raise self.fail("%s: a length of %d needs a fragmented length determinant" % (what, n), nd)
+
+    def put_normally_small(self, n, nd, what):
+        if n <= 63:
+            self.put(7, n)
+        else:
+            k = uint_octets(n)
+            self.put(1, 1)
+            self.put_length(k, nd, what)
+            self.put(8 * k, n)
+
+    def put_int64(self, v, nd, what):
+        if not -(1 << 63) <= v <= INT64_MAX:
+            raise self.fail("%s: %d does not fit a signed 64-bit integer" % (what, v), nd)
+
+    def uper_absent(self, nd):
+        """An absent key with no default (ruling 1 of 0.19)."""
+        loc = nd.uper
+        form = loc.form
+        if form == "int" and loc.ub is None:
+            self.put(8, 1)  # one octet of 0: `lb` for `int:<lb>:`, 0 for `int::`
+            self.pos += 8
+            return
+        if loc.ext:
+            self.pos += 1
+        if form == "int" or form == "enum":
+            self.put_constrained(loc.lb, loc.ub, loc.lb)
+            return
+        n = loc.lb  # `lb` characters of code 0, or `lb` zero octets
+        if loc.ub is not None:
+            self.put_constrained(loc.lb, loc.ub, n)
+        else:
+            self.put_length(n, nd, nd.locator)
+        self.pos += n * (7 if form == "chars" else 8)
+
+    def uper_put(self, nd, v, f):
+        loc = nd.uper
+        form = loc.form
+        what = "field %s (%s)" % (f.key, nd.locator)
+        if form == "int":
+            if loc.ub is not None:
+                if loc.lb <= v <= loc.ub:
+                    if loc.ext:
+                        self.pos += 1
+                    self.put_constrained(loc.lb, loc.ub, v)
+                    return
+                if not loc.ext:
+                    raise self.fail("%s: %d is outside %d..%d" % (what, v, loc.lb, loc.ub), nd)
+                self.put_int64(v, nd, what)
+                k = twos_octets(v)
+                self.put(1, 1)
+                self.put_length(k, nd, what)
+                self.put(8 * k, v & ((1 << (8 * k)) - 1))
+                return
+            self.put_int64(v, nd, what)
+            if loc.lb is None:
+                k = twos_octets(v)
+                self.put_length(k, nd, what)
+                self.put(8 * k, v & ((1 << (8 * k)) - 1))
+                return
+            if v < loc.lb:
+                raise self.fail("%s: %d is below %d" % (what, v, loc.lb), nd)
+            u = v - loc.lb
+            k = uint_octets(u)
+            self.put_length(k, nd, what)
+            self.put(8 * k, u)
+            return
+        if form == "enum":
+            if v < 0:
+                raise self.fail("%s: a negative index %d" % (what, v), nd)
+            if v < loc.n:
+                if loc.ext:
+                    self.pos += 1
+                self.put_constrained(0, loc.n - 1, v)
+                return
+            if not loc.ext:
+                raise self.fail("%s: index %d is outside the %d root values" % (what, v, loc.n), nd)
+            self.put(1, 1)
+            self.put_normally_small(v - loc.n, nd, what)
+            return
+        n = len(v)
+        if loc.ub is not None:
+            if not loc.lb <= n <= loc.ub:
+                raise self.fail("%s: a count of %d is outside %d..%d" % (what, n, loc.lb, loc.ub), nd)
+            self.put_constrained(loc.lb, loc.ub, n)
+        else:
+            self.put_length(n, nd, what)
+        if form == "chars":
+            acc = 0
+            for c in v:
+                acc = (acc << 7) | c
+            self.put(7 * n, acc)
+        else:
+            self.put(8 * n, int.from_bytes(v, "big"))
+
     def field(self, nd, ctx):
         """The value of the earliest key of the line that is present, else the
         earliest `default` among them, else the line's first sentinel (0.9),
-        else zero bits. A sentinel is never content (ruling 4 of 0.9)."""
+        else zero bits (for a UPER locator, the value of ruling 1 of 0.19).
+        A sentinel is never content (ruling 4 of 0.9)."""
         length = nd.length
         fields = ctx.fields
-        for f in nd.bindings:
+        bindings = _live(nd.bindings, ctx)
+        for f in bindings:
             if f.key in fields:
                 value = fields[f.key]
                 break
         else:
             defaults = ctx.defaults
-            for f in nd.bindings:
+            for f in bindings:
                 if f.key in defaults:
                     value = defaults[f.key]
                     break
             else:
                 first = nd.bindings[0]
-                if first.absent_out is None:
+                if nd.uper is not None:  # never a sentinel (ruling 22 of 0.19)
+                    self.uper_absent(nd)
+                elif first.absent_out is None or not bindings or bindings[0] is not first:  # ruling 20 of 0.18
                     self.pos += length
                 else:  # the integer into the field's bits, then `swap`
                     v = first.absent_out & ((1 << length) - 1)
@@ -607,6 +903,9 @@ class _Writer:
             v = f.transform.encode(value)
         except ValueError as e:
             raise TransformEncodeFailure(str(e), format=self.pack.name, locator=f.locator)
+        if nd.uper is not None:
+            self.uper_put(nd, v, f)
+            return
         if isinstance(v, (bytes, bytearray)):
             if f.swap:
                 v = v[::-1]
@@ -629,7 +928,18 @@ class _Writer:
         items = ctx.lists.get(nd.list) or ()
         n = len(items)
         mode = nd.mode
-        if mode == "count":  # an absent list writes a count of 0 (ruling 14 of 0.7)
+        if mode == "size":  # 0.19
+            if nd.list not in ctx.lists and nd.lb:  # absent: `lb` items with no keys
+                items = [Item() for _ in range(nd.lb)]
+            n = len(items)
+            if nd.ub is not None:
+                if not nd.lb <= n <= nd.ub:
+                    raise self.fail("list %s has %d item(s), outside its size %d..%d" % (nd.list, n, nd.lb, nd.ub),
+                                    nd)
+                self.put_constrained(nd.lb, nd.ub, n)
+            else:
+                self.put_length(n, nd, "list %s" % nd.list)
+        elif mode == "count":  # an absent list writes a count of 0 (ruling 14 of 0.7)
             if n >= (1 << nd.length):
                 raise self.fail("list %s has %d item(s), which does not fit the %d-bit count"
                                 % (nd.list, n, nd.length), nd)
@@ -660,6 +970,8 @@ class _Writer:
                 acc |= (v & ((1 << length) - 1)) << (nbits - start - length)
             return armored_text(acc, nbits)
         nbytes = -(-self.pos // 8)
+        if nbytes == 0 and self.pack.uper:  # an encoding of no bits is one octet 00 (X.691 10.1.3)
+            nbytes = 1
         for at, nd in self.wholes:
             stated = nbytes + nd.plus
             if not 0 <= stated < (1 << nd.length):

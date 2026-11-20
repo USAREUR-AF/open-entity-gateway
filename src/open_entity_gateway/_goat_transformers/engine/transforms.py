@@ -274,6 +274,44 @@ class Iso8601MsT(Transform):
         )
 
 
+def _civil(days):
+    """Days since 1970-01-01 -> (year, month, day), proleptic Gregorian."""
+    z = days + 719468
+    era = z // 146097
+    doe = z - era * 146097
+    yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    y = yoe + era * 400
+    doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+    mp = (5 * doy + 2) // 153
+    d = doy - (153 * mp + 2) // 5 + 1
+    m = mp + 3 if mp < 10 else mp - 9
+    return (y + 1 if m <= 2 else y), m, d
+
+
+class Iso8601ShortT(Iso8601MsT):
+    """`iso8601_short` (0.18): decoded as `iso8601_ms`; encoded without a zero
+    fraction and with the trailing zeros of the milliseconds removed."""
+
+    name = "iso8601_short"
+
+    def encode(self, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)
+            else:
+                raise ValueError("iso8601_short needs integer epoch ms, got %r" % (value,))
+        ms = value - 1000 * (value // 1000)  # ruling 11
+        secs = value // 1000
+        days, sod = divmod(secs, 86400)
+        y, mo, d = _civil(days)
+        if y < 0 or y > 9999:
+            raise ValueError("epoch ms out of range: %r" % value)
+        out = "%04d-%02d-%02dT%02d:%02d:%02d" % (y, mo, d, sod // 3600, sod // 60 % 60, sod % 60)
+        if ms:
+            out += "." + ("%03d" % ms).rstrip("0")
+        return out + "Z"
+
+
 class BoolT(Transform):
     """`bool` (version 0.5, `json` wire only): JSON `true` / `false` <-> int 1 / 0.
     `decode` takes the parsed JSON boolean; `encode` returns the JSON text."""
@@ -300,7 +338,7 @@ class BoolT(Transform):
         raise ValueError("bool transform encodes 1 or 0, got %r" % (value,))
 
 
-TRANSFORMS = {t.name: t for t in (StringT(), FloatT(), IntT(), Iso8601MsT())}
+TRANSFORMS = {t.name: t for t in (StringT(), FloatT(), IntT(), Iso8601MsT(), Iso8601ShortT())}
 TEXT_TRANSFORM_NAMES = frozenset(TRANSFORMS) | {"bool"}
 JSON_TRANSFORMS = dict(TRANSFORMS, bool=BoolT())  # `bool` is valid only on the `json` wire
 
@@ -684,6 +722,7 @@ def build_bits_transform(name, length):
 _TEXTUAL = ("xml", "geojson", "json", "text")
 TRANSFORM_WIRES = {
     "string": _TEXTUAL, "float": _TEXTUAL, "int": _TEXTUAL, "iso8601_ms": _TEXTUAL, "bool": ("json",),
+    "iso8601_short": ("xml", "geojson", "json"),  # 0.18 (ruling 11: bad-directive elsewhere)
     "uint": ("bits", "tlv"), "twos": ("bits", "tlv"), "linscale": ("bits",), "uscale": ("bits", "tlv"),
     "sscale": ("bits", "tlv"), "f32": ("bits", "tlv"), "f64": ("bits", "tlv"), "ascii": ("bits",),
     "sixbit": ("bits",),  # 0.14
