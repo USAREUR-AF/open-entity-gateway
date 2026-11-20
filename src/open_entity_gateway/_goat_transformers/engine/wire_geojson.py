@@ -167,14 +167,15 @@ def when_matches(when, value, fmt=None):
         return False
     if when.present:
         return True
+    texts = when.texts  # 0.20: any value of the list
     if isinstance(value, Num):
-        return canonical_scalar(value, fmt) == when.value
+        return canonical_scalar(value, fmt) in texts
     if isinstance(value, str):
-        return value == when.value
+        return value in texts
     if value is True:
-        return when.value == "true"
+        return "true" in texts
     if value is False:
-        return when.value == "false"
+        return "false" in texts
     return False
 
 

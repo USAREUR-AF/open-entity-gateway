@@ -13,7 +13,7 @@ from .errors import (
 from .modeldef import load_model_file, parse_model_text, scan_uses
 from .packdef import CORE, DISTRIBUTIONS, load_pack, parse_pack_text, split_key
 from .entity import Entity, Item, _build_via, _via_decode, _via_encode
-from .transforms import read_typed, table_side_type
+from .transforms import canonical_value_text, read_typed, table_side_type, value_canon
 
 DERIVE_PASSES = 8  # spec 0.6: the pass repeats until it sets nothing, at most 8 times
 MAX_ITEMS = 100000  # ruling 7b of 0.11: the default limit on the list items of one decode
@@ -69,6 +69,22 @@ def _model_order(models_dir, only=None):
             if n in wanted:
                 place(n)
     return order
+
+
+def requires_hold(kind, have, lists):
+    """0.5 and 0.20: the entity holds every `requires` key, has every `requires`
+    list with at least one item, and holds each `<key>=<values>` term's key with
+    a value whose canonical text is listed."""
+    for key in kind.requires_keys:
+        if key not in have:
+            return False
+    for name in kind.requires_lists:
+        if not lists.get(name):  # present, with at least one item
+            return False
+    for vc in kind.requires_eq:
+        if vc.key not in have or value_canon(have[vc.key], vc.key_type) not in vc.canon:
+            return False
+    return True
 
 
 class _Enc:
@@ -209,6 +225,13 @@ class Engine:
                     "module %s declares no key %r (%s as %s)" % (m, k, role, key),
                     format=fmt, locator=getattr(ref, "locator", None),
                 )
+        for vc in pack.value_checks:  # 0.20: a list key with `=`, over every line
+            m, k = split_key(vc.key)
+            if vc.what == "requires" and k in self.models[m].lists:
+                raise BadDirective(
+                    "'requires %s=...' names a list; a list takes no value, at line %d" % (vc.key, vc.lineno),
+                    format=fmt, locator=vc.key,
+                )
         table_types = {}
         for key, f, (m, k) in keyed:
             if f is None:
@@ -260,6 +283,36 @@ class Engine:
                 raise KeyTypeMismatch(
                     "default for key %s is not a %s value: %r" % (key, want, d.text), format=fmt
                 )
+        cases_seen = {}  # id(switch) -> the canonical values of its cases so far
+        for vc in sorted(pack.value_checks, key=lambda c: c.lineno):  # 0.20 rulings 1, 17 to 19
+            m, k = split_key(vc.key)
+            want = self.models[m].keys[k].type
+            canon = []
+            for v in vc.values:
+                try:
+                    canon.append(canonical_value_text(v, want))
+                except (ValueError, OverflowError):
+                    raise KeyTypeMismatch(
+                        "%s value %r for key %s is not a %s value, at line %d"
+                        % ("a 'requires'" if vc.what == "requires" else "a 'case'", v, vc.key, want, vc.lineno),
+                        format=fmt, locator=vc.key,
+                    )
+            if vc.what == "case":
+                seen = cases_seen.setdefault(id(vc.switch), set())
+                mine = set()
+                for c in canon:
+                    if c in seen or c in mine:
+                        raise BadDirective(
+                            "the value %s is listed twice in the cases of one switch, at line %d" % (c, vc.lineno),
+                            format=fmt, locator=vc.key,
+                        )
+                    mine.add(c)
+                seen.update(mine)
+                vc.switch.key_type = want
+            vc.key_type = want
+            vc.canon = frozenset(canon)
+            if vc.what == "case":
+                vc.target.canon = vc.canon
         kinds = pack.kinds
         if pack.seq is not None:  # a sequential pack: the kinds of the message and of every group body
             kinds = []
@@ -692,15 +745,8 @@ class Engine:
         have = entity.fields
         lists = entity.lists
         for kind in pack.kinds:
-            for key in kind.requires_keys:
-                if key not in have:
-                    break
-            else:
-                for name in kind.requires_lists:
-                    if not lists.get(name):  # present, with at least one item
-                        break
-                else:
-                    return kind
+            if requires_hold(kind, have, lists):
+                return kind
         raise NoKind("the entity has the required keys of no kind of the format", format=pack.name)
 
     def encode(self, fmt, entity):

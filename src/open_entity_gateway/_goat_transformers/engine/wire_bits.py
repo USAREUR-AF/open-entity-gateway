@@ -207,7 +207,7 @@ def when_holds(pack, msg, when):
     start = _start(pack, when.loc)
     if start + when.loc[2] > msg.nbits:
         return False
-    return msg.uint(start, when.loc[2]) == when.value
+    return when.holds_int(msg.uint(start, when.loc[2]))
 
 
 def _swap_int(value, length):
@@ -471,14 +471,42 @@ def _field_ops(pack, enc, base, ops, keep):
             ops.append((start, ln.loc[2], _swap_int(v, ln.loc[2]) if ln.swap else v, flag))
 
 
-def _fixed_ops(pack, plan, base, ops, keep):
+def _when_value(pack, enc, ln, keep):
+    """0.20 ruling 3: the value a `when` with a list or a range writes. When a
+    field line with a present key covers exactly the `when`'s bits (the same
+    offset and length) and the bits it writes match the `when`, those bits;
+    otherwise the first value. A `default` or a sentinel does not count."""
+    if not getattr(ln, "listed", False):
+        return ln.value
+    start = _start(pack, ln.loc)
+    length = ln.loc[2]
+    values = enc.values
+    for i, f in enc.plan.ifields:
+        if i not in values or i in enc.sentinels or i in enc.defaulted:
+            continue
+        if f.loc[2] != length or _start(pack, f.loc) != start:
+            continue
+        if keep is not None and f.gate is not None and not keep[f.gate]:
+            continue
+        v = values[i]
+        if isinstance(v, (bytes, bytearray)):
+            return ln.value
+        v = int(v) & ((1 << length) - 1)
+        if f.swap:
+            v = _swap_int(v, length)
+        return v if ln.holds_int(v) else ln.value  # the earliest line's value stands (0.5 ruling 5)
+    return ln.value
+
+
+def _fixed_ops(pack, plan, base, ops, keep, enc=None):
     """Add the writes of the scope's `when` and `const` lines (0.5 ruling 5:
     over any field). With `keep`, a `const` of a gate block only when held."""
     for ln in plan.lines:
         if not ln.is_field and not ln.is_group:
             if keep is not None and ln.gate is not None and not keep[ln.gate]:
                 continue
-            ops.append((base + _start(pack, ln.loc), ln.loc[2], ln.value, STRONG))
+            value = _when_value(pack, enc, ln, keep) if enc is not None else ln.value
+            ops.append((base + _start(pack, ln.loc), ln.loc[2], value, STRONG))
 
 
 def _choose(pack, enc):
@@ -513,7 +541,7 @@ def _choose(pack, enc):
     ops = []
     outside = dict.fromkeys(gates, False)
     _field_ops(pack, enc, 0, ops, outside)
-    _fixed_ops(pack, plan, 0, ops, outside)
+    _fixed_ops(pack, plan, 0, ops, outside, enc)
     for i, g in plan.igroups:
         if g.count_loc is not None:
             n = len(enc.groups.get(i) or ())
@@ -591,7 +619,7 @@ def _emit(pack, enc, base, ops, checks):
                 format=pack.name, locator=loc,
             )
         checks.append((plan, base, held))
-    _fixed_ops(pack, plan, base, ops, held)
+    _fixed_ops(pack, plan, base, ops, held, enc)
     counts = []
     for i, g in plan.igroups:
         children = enc.groups.get(i)

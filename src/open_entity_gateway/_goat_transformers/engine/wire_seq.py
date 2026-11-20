@@ -21,15 +21,63 @@ after the last line, not rounded to a byte, zero-filled to a multiple of 6.
 """
 
 from .entity import Entity, Item, _via_decode, _via_encode
-from .errors import MalformedWire, NoKind, TransformDecodeFailure, TransformEncodeFailure
+from .errors import GTError, MalformedWire, NoKind, TransformDecodeFailure, TransformEncodeFailure
 from .seqdef import (
     T_ALIGN, T_CHAIN, T_CHOICE, T_CONST, T_EXT, T_FIELD, T_GROUP, T_IF, T_LENGTH, T_OPT, T_PAD, T_PRESENCE,
-    T_WHEN, T_WHOLE, children,
+    T_SWITCH, T_WHEN, T_WHOLE, children,
 )
+from .transforms import value_canon
 from .uper import INT64_MAX, twos_octets, uint_octets
 from .wire_bits import Message, _hex_to_bytes, _swap_int, armored_message, armored_text, raw_int, sixbit_values
 
 _NONE = frozenset()
+
+
+class _UperValue:
+    """What a field line with a UPER locator writes (0.19): the transform's
+    value `v`, for the key of `f`; `_Writer.field` writes it."""
+
+    __slots__ = ("v", "f")
+
+    def __init__(self, v, f):
+        self.v = v
+        self.f = f
+
+
+_UPER_ABSENT = object()  # a UPER locator whose key is absent: the value of ruling 1 of 0.19
+
+
+def _uper_absent_raw(loc):
+    """What decode reads from the bits `_Writer.uper_absent` writes (ruling 1
+    of 0.19): `lb`, or 0, for an integer; index 0; `lb` characters of code 0;
+    `lb` zero octets."""
+    if loc.form == "int":
+        return loc.lb if loc.lb is not None else 0
+    if loc.form == "enum":
+        return 0
+    if loc.form == "chars":
+        return [0] * (loc.lb or 0)
+    return bytes(loc.lb or 0)
+_MISSING = object()
+_FAILED = object()  # encode: the bits a line wrote for the key do not decode (0.20 ruling 31)
+
+
+def select_case(nd, value):
+    """0.20: the case of switch `nd` for the key's value (`_MISSING` when the
+    key is absent): the first case whose list holds its canonical text, else
+    the `else`; None when there is no `else` (`no-kind`)."""
+    if value is _MISSING:
+        return nd.other
+    text = value_canon(value, nd.key_type)
+    for case in nd.cases:
+        if text in case.canon:
+            return case
+    return nd.other
+
+
+def _no_case(pack, nd, sc_item):
+    return NoKind("the %s matches no case of 'switch %s' and the switch has no 'else'"
+                  % ("item" if sc_item else "message", nd.key), format=pack.name, locator=nd.key)
 
 
 class _TooBig(Exception):
@@ -77,6 +125,10 @@ class _Reader:
         self.soft = []      # the ends of the open `length` blocks, outermost first
         self.env = {}       # presence node -> the set of its bits that are 1
         self.failures = []  # (key, locator, reason)
+        # 0.20 ruling 21: the bits that are 1 and that only `if` lines of cases
+        # name, per reading of a presence; a selected case clears the bits it names
+        self.pending = {}   # presence node -> [the bits of each of its readings still to be named]
+        self.readings = []  # (presence node, bits still to be named) of every reading
 
     def short(self, what):
         return MalformedWire("the input, or a length extent, ends before %s" % what, format=self.pack.name)
@@ -140,6 +192,22 @@ class _Reader:
                 self.ext(nd, sc)
             elif t == T_CHOICE:
                 self.choice(nd, sc)
+            elif t == T_SWITCH:
+                key = nd.key
+                if key not in sc.fields and sc.failed:  # ruling 35 of 0.20
+                    bad = [(sc.prefix + k, loc, why) for k, loc, why, _ in sc.failed if k == key]
+                    if bad:
+                        raise TransformDecodeFailure(
+                            "the key of 'switch %s' could not be decoded" % key, format=self.pack.name, absent=bad
+                        )
+                case = select_case(nd, sc.fields.get(key, _MISSING))
+                if case is None:
+                    raise _no_case(self.pack, nd, sc.prefix)
+                pending = self.pending
+                for p, bit in case.if_names:  # ruling 36: every earlier reading of the presence
+                    for rest in pending.get(p, ()):
+                        rest.discard(bit)
+                self.run(case.nodes, sc)
             else:
                 self.whole(nd)
 
@@ -149,7 +217,11 @@ class _Reader:
         if pos + nd.length > self.limit():
             return False
         self.pos = pos + nd.length
-        return self.msg.uint(pos, nd.length) == nd.value
+        v = self.msg.uint(pos, nd.length)
+        for lo, hi in nd.ranges:
+            if lo <= v <= hi:
+                return True
+        return False
 
     # -- UPER (0.19) --
 
@@ -370,12 +442,29 @@ class _Reader:
                 if not msg.uint(start + 7, 1):
                     break
                 octet += 1
+        rest = None
         for bit in bits:
             if bit not in nd.named:  # ruling 1 of 0.8
                 raise MalformedWire(
                     "presence bit %s.%d is 1 and no 'if' block names it" % (nd.name, bit), format=self.pack.name
                 )
+            if bit not in nd.named_static:  # named only inside cases: counts when such a case is read
+                if rest is None:
+                    rest = set()
+                rest.add(bit)
+        if rest is not None:
+            self.readings.append((nd, rest))
+            self.pending.setdefault(nd, []).append(rest)
         self.env[nd] = bits
+
+    def check_named(self):
+        """0.20: a presence bit that is 1 and that no `if` of the lines read names is `malformed-wire`."""
+        for nd, rest in self.readings:
+            if rest:
+                raise MalformedWire(
+                    "presence bit %s.%d is 1 and no 'if' block of the cases read names it" % (nd.name, min(rest)),
+                    format=self.pack.name,
+                )
 
     def chain(self, nd, sc):
         parts = nd.parts
@@ -537,6 +626,7 @@ def decode(pack, data, limit=None):
     rd = _Reader(pack, data, limit)
     ent = Entity()
     kind = rd.body(pack.seq, _Scope(ent.fields, ent.lists, ""))
+    rd.check_named()
     if kind is not None:
         ent.kind = (pack.name, kind.name)
     if rd.failures:
@@ -550,14 +640,24 @@ def decode(pack, data, limit=None):
 
 
 class _Ctx:
-    """What one message or one item is written from."""
+    """What one message or one item is written from. `readback` holds what
+    decode would read for each key from the lines written so far (0.20), and
+    `token` names the scope: None for the message, the item's id for an item."""
 
-    __slots__ = ("fields", "lists", "defaults")
+    __slots__ = ("fields", "lists", "defaults", "readback", "token")
 
-    def __init__(self, fields, lists, defaults):
+    def __init__(self, fields, lists, defaults, readback=None, token=None):
         self.fields = fields
         self.lists = lists
         self.defaults = defaults
+        self.readback = {} if readback is None else readback
+        self.token = token
+
+    def inside(self, case):
+        """The context of the lines of one case: its defaults over the scope's (rulings 7, 22)."""
+        if not case.defaults:
+            return self
+        return _Ctx(self.fields, self.lists, case.defaults_over(self.defaults), self.readback, self.token)
 
 
 def select_kind(pack, body, kind_ref, fields, lists, item=False):
@@ -574,16 +674,11 @@ def select_kind(pack, body, kind_ref, fields, lists, item=False):
             return kind
         if not item:
             raise NoKind("the format has no kind %r" % (kind_ref[1],), format=pack.name)
+    from .engine import requires_hold
+
     for kind in body.kinds:
-        for key in kind.requires_keys:
-            if key not in fields:
-                break
-        else:
-            for name in kind.requires_lists:
-                if not lists.get(name):
-                    break
-            else:
-                return kind
+        if requires_hold(kind, fields, lists):
+            return kind
     raise NoKind("the entity has the required keys of no kind", format=pack.name)
 
 
@@ -602,13 +697,49 @@ def _live(bindings, ctx):
 
 
 class _Writer:
-    def __init__(self, pack):
+    def __init__(self, pack, known=None):
         self.pack = pack
         self.ops = []     # (start, length, value)
         self.pos = 0
         self.env = {}     # presence node -> the set of its bits that are 1
         self.wholes = []  # (start, node) of each `length ... whole`
         self.blocks = {}  # id(item) -> (ctx, lines), so an item selects its kind once
+        # 0.20: the case of each switch, per scope, (token, id(switch)) -> Case or None. A
+        # presence, `opt` or `fx` bit is written before the lines it stands for, so the
+        # case is foreseen (`used`); the lines then select it (`actual`). When the two
+        # differ the message is written again with what was selected (`known`).
+        self.known = known or {}
+        self.used = {}
+        self.actual = {}
+
+    def mismatch(self):
+        actual = self.actual
+        for k, case in self.used.items():
+            if k in actual and actual[k] is not case:
+                return True
+        return False
+
+    def foresee(self, nd, ctx):
+        """The case switch `nd` selects in scope `ctx`, before its lines are written."""
+        k = (ctx.token, id(nd))
+        if k in self.actual:
+            return self.actual[k]
+        if k in self.known:
+            case = self.known[k]
+        else:  # what the first line of the key would write, read back
+            case = nd.other
+            for line in nd.key_lines:
+                got = {}
+                try:
+                    out, raw = self.line_out(line, ctx)
+                except GTError:
+                    continue
+                self.read_back(line, raw, got)
+                if nd.key in got and got[nd.key] is not _FAILED:
+                    case = select_case(nd, got[nd.key])
+                    break
+        self.used[k] = case
+        return case
 
     def put(self, length, value):
         if value:
@@ -624,7 +755,7 @@ class _Writer:
         if got is None or got[2] is not nd:
             body = nd.scope
             kind = select_kind(self.pack, body, getattr(item, "kind", None), item.fields, item.lists, item=True)
-            ctx = _Ctx(item.fields, item.lists, body.defaults_for(kind))
+            ctx = _Ctx(item.fields, item.lists, body.defaults_for(kind), token=id(item))
             got = self.blocks[id(item)] = (ctx, kind.block if kind is not None else body.common, nd, item)
         return got[0], got[1]
 
@@ -643,6 +774,10 @@ class _Writer:
                         return True
             elif t == T_GROUP:
                 if ctx.lists.get(nd.list):
+                    return True
+            elif t == T_SWITCH:  # the selected case only (0.20)
+                case = self.foresee(nd, ctx)
+                if case is not None and self.has_content(case.nodes, ctx.inside(case)):
                     return True
             else:
                 for part in children(nd):
@@ -665,6 +800,10 @@ class _Writer:
             elif t == T_OPT or t == T_LENGTH or t == T_CHAIN or t == T_EXT or t == T_CHOICE:
                 for part in children(nd):
                     self.presence_bits(p, part, ctx, bits)
+            elif t == T_SWITCH:  # the selected case only (0.20)
+                case = self.foresee(nd, ctx)
+                if case is not None:
+                    self.presence_bits(p, case.nodes, ctx.inside(case), bits)
             elif t == T_GROUP:
                 for item in ctx.lists.get(nd.list) or ():
                     ictx, lines = self.item_block(nd, item)
@@ -755,6 +894,18 @@ class _Writer:
                     self.pos += 1
                 self.put_constrained(0, nd.n - 1, alt.value)
                 self.emit(alt.body, ctx)
+            elif t == T_SWITCH:
+                rb = ctx.readback
+                if rb.get(nd.key, _MISSING) is _FAILED:  # ruling 31 of 0.20
+                    raise TransformEncodeFailure(
+                        "the key of 'switch %s' does not read back from the bits written" % nd.key,
+                        format=self.pack.name, locator=nd.key,
+                    )
+                case = select_case(nd, rb.get(nd.key, _MISSING))
+                self.actual[(ctx.token, id(nd))] = case
+                if case is None:
+                    raise _no_case(self.pack, nd, ctx.token is not None)
+                self.emit(case.nodes, ctx.inside(case))
             else:  # whole: written when the message is complete
                 self.wholes.append((self.pos, nd))
                 self.pos += nd.length
@@ -867,10 +1018,65 @@ class _Writer:
             self.put(8 * n, int.from_bytes(v, "big"))
 
     def field(self, nd, ctx):
-        """The value of the earliest key of the line that is present, else the
-        earliest `default` among them, else the line's first sentinel (0.9),
-        else zero bits (for a UPER locator, the value of ruling 1 of 0.19).
-        A sentinel is never content (ruling 4 of 0.9)."""
+        """Write one field line and note what decode would read from it."""
+        out, raw = self.line_out(nd, ctx)
+        length = nd.length
+        if out is _UPER_ABSENT:  # a UPER locator: the value of ruling 1 of 0.19
+            self.uper_absent(nd)
+        elif isinstance(out, _UperValue):
+            self.uper_put(nd, out.v, out.f)
+        elif out is None:
+            self.pos += length
+        elif isinstance(out, (bytes, bytearray)):
+            start = self.pos
+            for k, b in enumerate(out):
+                if b:
+                    self.ops.append((start + 8 * k, 8, b))
+            self.pos = start + length
+        elif isinstance(out, tuple):  # the six-bit values of a `sixbit` field (0.14)
+            start = self.pos
+            for k, c in enumerate(out):
+                if c:
+                    self.ops.append((start + 6 * k, 6, c))
+            self.pos = start + length
+        else:
+            self.put(length, out)
+        self.read_back(nd, raw, ctx.readback)
+
+    def read_back(self, nd, raw, got):
+        """Add to `got` the value decode reads for each key of the line from
+        `raw` (None: a sentinel), as `_Reader.field` does (0.20)."""
+        if raw is None:
+            return
+        first = nd.bindings[0]
+        if first.absent is not None:  # as `_Reader.field` compares it, `sixbit` too
+            if raw_int(raw, self.pack.bit_order == "msb") in first.absent:
+                return
+        n2c = self.pack.native_to_cot
+        for f in nd.bindings:
+            key = f.key
+            if key in got and got[key] is not _FAILED:
+                continue
+            try:
+                value = f.transform.decode(raw)
+                if f.via_dec is not None:
+                    value = _via_decode(f, value)
+            except ValueError:
+                got.setdefault(key, _FAILED)  # a later line of the key may still read back
+                continue
+            if n2c and key == "type" and value in n2c:
+                value = n2c[value]
+            got[key] = value
+
+    def line_out(self, nd, ctx):
+        """-> (what the line writes, what decode reads back) of one field
+        line: the value of the earliest key of the line that is present, else
+        the earliest `default` among them, else the line's first sentinel
+        (0.9), else zero bits. A sentinel is never content (ruling 4 of 0.9).
+        What is written is None (zero bits), an integer or bytes, as they are
+        put, or for a UPER locator (0.19) `_UPER_ABSENT` or a `_UperValue`,
+        which `field` writes; what is read back is None for a sentinel. Nothing
+        is written here: a switch foresees its case through this (0.20)."""
         length = nd.length
         fields = ctx.fields
         bindings = _live(nd.bindings, ctx)
@@ -887,13 +1093,16 @@ class _Writer:
             else:
                 first = nd.bindings[0]
                 if nd.uper is not None:  # never a sentinel (ruling 22 of 0.19)
-                    self.uper_absent(nd)
-                elif first.absent_out is None or not bindings or bindings[0] is not first:  # ruling 20 of 0.18
-                    self.pos += length
-                else:  # the integer into the field's bits, then `swap`
-                    v = first.absent_out & ((1 << length) - 1)
-                    self.put(length, _swap_int(v, length) if first.swap else v)
-                return
+                    return _UPER_ABSENT, _uper_absent_raw(nd.uper)
+                if first.absent_out is None or not bindings or bindings[0] is not first:  # ruling 20 of 0.18
+                    if getattr(first.transform, "as_bytes", False):
+                        return None, bytes(length // 8)
+                    if getattr(first.transform, "as_sixbit", False):
+                        return None, [0] * (length // 6)
+                    return None, 0
+                # the integer into the field's bits, then `swap`
+                v = first.absent_out & ((1 << length) - 1)
+                return (_swap_int(v, length) if first.swap else v), None
         try:
             c2n = self.pack.cot_to_native
             if c2n and f.key == "type" and value in c2n:
@@ -903,26 +1112,17 @@ class _Writer:
             v = f.transform.encode(value)
         except ValueError as e:
             raise TransformEncodeFailure(str(e), format=self.pack.name, locator=f.locator)
-        if nd.uper is not None:
-            self.uper_put(nd, v, f)
-            return
+        if nd.uper is not None:  # the value as the UPER locator reads it back (0.19)
+            return _UperValue(v, f), v
         if isinstance(v, (bytes, bytearray)):
-            if f.swap:
-                v = v[::-1]
-            start = self.pos
-            for k, b in enumerate(v):
-                if b:
-                    self.ops.append((start + 8 * k, 8, b))
-            self.pos = start + length
-        elif isinstance(v, tuple):  # the six-bit values of a `sixbit` field
-            start = self.pos
-            for k, c in enumerate(v):
-                if c:
-                    self.ops.append((start + 6 * k, 6, c))
-            self.pos = start + length
-        else:
-            v = int(v) & ((1 << length) - 1)
-            self.put(length, _swap_int(v, length) if f.swap else v)
+            written = bytes(v[::-1] if f.swap else v)
+            n = length // 8
+            back = (written + bytes(n))[:n]
+            return written, (back[::-1] if f.swap else back)
+        if isinstance(v, tuple):  # the six-bit values of a `sixbit` field (0.14)
+            return v, list(v)
+        v = int(v) & ((1 << length) - 1)
+        return (_swap_int(v, length) if f.swap else v), v
 
     def group(self, nd, ctx):
         items = ctx.lists.get(nd.list) or ()
@@ -989,7 +1189,22 @@ def encode(pack, entity):
     """-> lowercase hex, or armored text under `armor sixbit`."""
     body = pack.seq
     kind = select_kind(pack, body, entity.kind, entity.fields, entity.lists)
-    wr = _Writer(pack)
-    wr.emit(kind.block if kind is not None else body.common,
-            _Ctx(entity.fields, entity.lists, body.defaults_for(kind)))
-    return wr.finish()
+    known = {}
+    tries = 8
+    for attempt in range(tries):
+        wr = _Writer(pack, known)
+        last = attempt == tries - 1
+        try:
+            wr.emit(kind.block if kind is not None else body.common,
+                    _Ctx(entity.fields, entity.lists, body.defaults_for(kind)))
+            out = wr.finish()
+        except GTError:
+            if last or not wr.mismatch():
+                raise
+            out = None
+        if not wr.mismatch():
+            return out
+        if last:  # ruling 33 of 0.20
+            raise TransformEncodeFailure("the predicted cases of the switches never settle", format=pack.name)
+        known = dict(known)
+        known.update(wr.actual)

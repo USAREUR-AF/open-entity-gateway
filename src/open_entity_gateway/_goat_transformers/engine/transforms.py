@@ -918,6 +918,34 @@ def read_typed(text, type_name):
     return read_number_text(text)
 
 
+_PACK_INT = re.compile(r"-?[0-9]+\Z")
+_PACK_FLOAT = re.compile(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")  # ruling 24 of 0.20: as a JSON number
+
+
+def canonical_value_text(text, type_name):
+    """0.20 rulings 1 and 17: a `requires =` or `case` value read as the key's
+    type -> its canonical text. An `int` is an optional `-` then digits.
+    Raises ValueError."""
+    if type_name == "string":
+        return text
+    if type_name == "int":
+        if not _PACK_INT.match(text):
+            raise ValueError("not an integer: %r" % text)
+        return format_int(int(text))
+    if not _PACK_FLOAT.match(text):
+        raise ValueError("not a number: %r" % text)
+    return format_float(read_typed(text, "float"))
+
+
+def value_canon(value, type_name):
+    """The canonical text of a model value held by a key of `type_name`."""
+    if isinstance(value, str):
+        return value
+    if type_name == "float" or isinstance(value, float):
+        return format_float(float(value))
+    return format_int(int(value))
+
+
 def canonical_text(value, type_name):
     """Canonical text of a model value: a string as-is, an integer as decimal
     digits, a float as in ruling 3 of 0.1.1."""
