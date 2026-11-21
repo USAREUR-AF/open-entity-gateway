@@ -11,12 +11,23 @@ from .errors import (
 from .transforms import (
     TRANSFORMS, JSON_TRANSFORMS, build_bits_transform, bits_len_allowed, format_float,
     PROTOBUF_TRANSFORMS, UnknownTransformName, check_transform_text, read_uint_text, transform_valid_on,
-    build_v15_text, v15_family,
+    build_v15_text, v15_family, terminator_code,
 )
-from . import uper, wire_text, wire_tlv
+from ._build import WIRES as BUILD_WIRES
 
-WIRES = ("xml", "geojson", "json", "bits", "protobuf", "text", "tlv")
-BIT_ORDERS = ("lsb", "msb")
+# The wire-specific parts of the pack language this module calls, each only
+# for a pack on its wire. A build without the wire leaves the module out, and
+# such a pack is `unknown-wire` at line check 6 before any of them is reached
+# (spec 0.24, ruling 1c).
+if "bits" in BUILD_WIRES:
+    from . import uper
+if "text" in BUILD_WIRES:
+    from . import wire_text
+if "tlv" in BUILD_WIRES:
+    from . import wire_tlv
+
+WIRES = ("xml", "geojson", "json", "bits", "protobuf", "text", "tlv")  # the wires of the specification
+BIT_ORDERS = ("lsb", "msb", "msb-lsb")  # `msb-lsb`: 0.22
 DISTRIBUTIONS = ("public", "controlled")  # public is below controlled
 CORE = "core"
 # Ruling 5 of 0.11. The directives of a pack, in the order the table states them.
@@ -31,6 +42,7 @@ PACK_DIRECTIVES = frozenset((
     # outside a UPER pack, checked after the file is read
     "encoding", "ext", "choice", "alt",
     "switch", "case", "else",  # sequential layouts (0.20)
+    "count",  # sequential layouts (0.21)
 ))
 # The lines that stand after the `wire` line (5b): before it, `missing-wire`.
 NEEDS_WIRE = frozenset((
@@ -59,17 +71,20 @@ ARG_COUNTS = dict({kw: (1, 1) for kw in _ONE_ARG}, **{
     "encoding": (1, 1), "ext": (0, 0), "choice": (1, 2), "alt": (1, 1),
     # 0.20: `switch <key>`, `case <values>`, `else`
     "switch": (1, 1), "case": (1, 1), "else": (0, 0),
+    # 0.21: `count <name> <len> [plus <n>]`; the form of the options is checked after the file
+    "count": (2, 4),
 })
 HEADER_ONCE = ("format", "version", "wire", "distribution")  # a second one is `bad-directive` (5b step 5)
 _SINGLE = ("word_bytes", "bit_order", "layout")
 LAYOUTS = ("fixed", "sequential")
 # Lines of a sequential pack (0.8): each is `bad-directive` in a fixed-layout pack.
 _SEQ_ONLY = ("pad", "align", "presence", "opt", "chain", "fx", "length", "also",
-             "switch", "case", "else")  # 0.20: `switch` is a block of a sequential layout
+             "switch", "case", "else",  # 0.20: `switch` is a block of a sequential layout
+             "count")  # 0.21: `count <name> <len> [plus <n>]`
 _GROUP_LINES = ("field", "const", "default", "group", "if", "end")
 # The lines of a gate block (0.17).
 _GATE_LINES = ("field", "const", "default", "if", "end")
-FIELD_OPTIONS = ("via", "swap", "trim", "optional", "absent", "with")
+FIELD_OPTIONS = ("via", "swap", "trim", "optional", "absent", "with", "stop")  # `stop`: 0.22
 _JSON_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
 TEXT_DIRECTIVES = ("delimiter", "start", "checksum")  # the `text` wire (0.10)
 ARMORS = ("hex", "sixbit")  # the `bits` wire (0.14)
@@ -395,14 +410,18 @@ class Plan:
             ]
             return value
         if name == "order" or name == "mapped":
-            order = self.order = []
-            mapped = self.mapped = set()
+            # Built whole, then published (spec 0.25, ruling 1c): a thread
+            # never sees a half-built value of another.
+            order = []
+            mapped = set()
             for ln in self.lines:
                 if not ln.is_field and ln.present:
                     continue
                 if ln.locator not in mapped:
                     mapped.add(ln.locator)
                     order.append(ln.locator)
+            self.mapped = mapped
+            self.order = order
             return order if name == "order" else mapped
         raise AttributeError(name)
 
@@ -600,6 +619,12 @@ def line_head(raw, source, lineno, seen, directives=PACK_DIRECTIVES, arg_counts=
             raise BadDirective("a second %r line at %s" % (kw, where), format=fmt)
         if kw == "wire" and args[0] not in WIRES:
             raise UnknownWire("unknown wire %r (known: %s) at %s" % (args[0], ", ".join(WIRES), where), format=fmt)
+        if kw == "wire" and args[0] not in BUILD_WIRES:  # spec 0.24, ruling 1c
+            raise UnknownWire(
+                "wire %r is a wire of the specification that this build does not have (this build has: %s) at %s"
+                % (args[0], ", ".join(BUILD_WIRES) or "no wire", where),
+                format=fmt,
+            )
         if kw == "distribution" and args[0] not in DISTRIBUTIONS:
             raise BadDirective(
                 "unknown distribution %r (known: %s) at %s" % (args[0], ", ".join(DISTRIBUTIONS), where),
@@ -726,6 +751,18 @@ class _Deferred(Exception):
         self.err = err
 
 
+def set_stop(transform, tname, text):
+    """The field option `stop <code>` (0.22) on a fixed-size `chars` field:
+    -> why it is refused (`bad-directive` after the file), or None."""
+    if v15_family(tname) != "chars":
+        return "field option 'stop' applies to a 'chars' field only"
+    try:
+        transform.stop = terminator_code(text, transform.charset)
+    except ValueError as e:
+        return "field option 'stop': %s" % e
+    return None
+
+
 def _parse_options(tokens, fmt, locator, where):
     """-> {option: value} for the tokens after a `field` line's transform."""
     out = {}
@@ -736,12 +773,13 @@ def _parse_options(tokens, fmt, locator, where):
             raise _LineBad("unknown field option %r at %s" % (opt, where), format=fmt, locator=locator)
         if opt in out:
             raise _LineBad("field option %r is given twice at %s" % (opt, where), format=fmt, locator=locator)
-        if opt == "via" or opt == "absent" or opt == "with":
+        if opt in ("via", "absent", "with", "stop"):
             # The token after `absent` is always its argument (ruling 11 of 0.9).
             if i + 1 >= len(tokens):
                 raise _LineBad(
                     "field option %r takes %s at %s" % (
-                        opt, "a table name" if opt == "via" else "a model key" if opt == "with" else "a value", where),
+                        opt, "a table name" if opt == "via" else "a model key" if opt == "with" else
+                        "a terminator code" if opt == "stop" else "a value", where),
                     format=fmt, locator=locator,
                 )
             out[opt] = tokens[i + 1]
@@ -831,7 +869,7 @@ def parse_absent(wire, transform, length, text, fmt, locator, where, coord=False
         for t, how in typed:
             if how != "bool":
                 raise bad("value %r on the 'bool' transform is not true or false" % t)
-    from .wire_geojson import dump_string
+    from .jsonio import dump_string
 
     t, how = typed[0]
     out = dump_string(t) if how == "string" else t
@@ -921,6 +959,14 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, def
                 % (locator, where), format=name, locator=locator,
             )))
             return None
+        if locator.startswith("until:"):
+            # 0.22: `until:<code>` is a locator of sequential layouts only,
+            # `bad-directive` after the file; the options are still a line check
+            _parse_options(options, name, locator, where)
+            deferred.append((lineno, BadDirective(
+                "the locator %r is for sequential layouts only, at %s" % (locator, where), format=name, locator=locator,
+            )))
+            return None
         loc = _fixed_bits_locator(name, locator, where)
     elif _item_locator(wire, name, locator, in_group, where):
         loc = ()
@@ -939,8 +985,8 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, def
     opts = _parse_options(options, name, locator, where)
     via = opts.get("via")
     if wire == "bits":
-        if "swap" in opts and tname == "sixbit":  # 0.14
-            defer("field option 'swap' does not apply to the 'sixbit' transform")
+        if "swap" in opts and tname in ("sixbit", "hex"):  # 0.14, 0.22
+            defer("field option 'swap' does not apply to the '%s' transform" % tname)
         elif "swap" in opts and loc[2] % 8 != 0:
             defer("field option 'swap' needs a bit length that is a multiple of 8, got %d" % loc[2])
         if "trim" in opts and tname not in ("ascii", "sixbit"):  # ruling 5 of 0.14
@@ -953,6 +999,8 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, def
                 defer("field option %r applies to the bits wire only" % opt)
         if wire == "text" and "absent" in opts:  # ruling 16 of 0.10
             defer("field option 'absent' is not a field option of the text wire")
+        if "stop" in opts:  # 0.22: a `chars` field of the bits wire
+            defer("field option 'stop' applies to a 'chars' field of the bits wire only")
 
     transform = None
     if valid:
@@ -963,6 +1011,10 @@ def _resolve_field(wire, name, key, locator, tname, options, source, lineno, def
             transform = build_bits_transform(tname, length)
             if "trim" in opts and tname in ("ascii", "sixbit"):
                 transform.trim = True
+            if "stop" in opts:  # 0.22
+                why = set_stop(transform, tname, opts["stop"])
+                if why is not None:
+                    defer(why)
         elif wire == "protobuf":
             transform = PROTOBUF_TRANSFORMS[tname]
         elif wire == "text":
@@ -1028,7 +1080,7 @@ def _resolve_tlv_field(name, key, locator, tname, options, where, lineno, deferr
             bad("transform %r: parameters that do not parse: %s" % (tname, e))
         except ValueError as e:
             bad(str(e))
-    for opt in ("swap", "trim", "optional"):
+    for opt in ("swap", "trim", "optional", "stop"):
         if opt in opts:
             bad("field option %r is not an option of the tlv wire" % opt)
     if "absent" in opts:  # ruling 10 of 0.13: an empty value is already absent on tlv
@@ -1070,6 +1122,11 @@ def _resolve_tlv_when(name, locator, value, where, lineno, const):
     return cls(locator, (tags, size), value=n, lineno=lineno)
 
 
+class _WrongGroupLocator(ValueError):
+    """A group locator of the right form that is not valid for its wire:
+    `bad-directive` (ruling 37 of 0.21), not `bad-locator` (5a of 0.11)."""
+
+
 def _resolve_group(wire, name, list_name, locator, options, source, lineno, in_group, deferred):
     """-> Group for one `group` line (spec 0.7, "Group locators and
     item-relative locators, by wire"). The locator is a line check
@@ -1082,7 +1139,7 @@ def _resolve_group(wire, name, list_name, locator, options, source, lineno, in_g
     def bad(msg):
         problems.append((lineno, BadDirective("%s at %s" % (msg, where), format=name, locator=locator)))
 
-    if wire == "bits" and locator in ("count", "while", "more", "fx"):
+    if wire == "bits" and locator in ("count", "while", "more", "fx", "rest", "last"):  # 0.21 adds two
         raise _LineBad("a group with %r is a line of a sequential pack at %s" % (locator, where),
                            format=name, locator=locator)
     # the locator
@@ -1101,9 +1158,11 @@ def _resolve_group(wire, name, list_name, locator, options, source, lineno, in_g
             if wire == "xml":
                 loc = parse_xml_locator(locator, allow_presence=True)
                 if loc[1] != "elem":
-                    raise ValueError("an xml group locator is a path of element names")
+                    raise _WrongGroupLocator("an xml group locator is a path of element names")
                 loc = loc[0]
             elif wire == "protobuf":
+                if locator in ("rest", "last"):  # the sequential group modes of 0.21
+                    raise _WrongGroupLocator("%r is a group mode of a sequential pack, not a field path" % locator)
                 loc = parse_protobuf_locator(locator)
             elif wire == "json" or in_group:
                 loc = parse_json_locator(locator)
@@ -1111,6 +1170,9 @@ def _resolve_group(wire, name, list_name, locator, options, source, lineno, in_g
                 loc = parse_geojson_locator(locator)
                 if loc[0] == "coord":
                     raise ValueError("a geojson group locator is a properties member or a top-level member")
+        except _WrongGroupLocator as e:  # 0.21 ruling 37: not valid for its wire, after the file
+            bad("bad %s group locator: %s" % (wire, e))
+            loc = ()
         except ValueError as e:
             raise _bad_locator(wire, where, name, locator, e)
 
@@ -1682,7 +1744,9 @@ def parse_pack_text(text, *, source="pack.def"):
     line order (`bad-directive`), the load-time `missing-root`, the missing
     `word_bytes`; then `missing-distribution`, `missing-source`. The checks
     against the loaded modules and `duplicate-format` are `Engine.add`'s."""
-    if _find_wire(text) == "bits" and _find_wire(text, "layout") == "sequential":
+    # A build without `bits` does not have the sequential parser; the pack is
+    # read below, where its `wire` line is `unknown-wire` (spec 0.24, ruling 1c).
+    if "bits" in BUILD_WIRES and _find_wire(text) == "bits" and _find_wire(text, "layout") == "sequential":
         from .seqdef import parse_seq_pack_text
         return parse_seq_pack_text(text, source=source)
     seen = {}            # the header values: `format`, `version`, `wire`, `distribution`

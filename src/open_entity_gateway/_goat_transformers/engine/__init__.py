@@ -8,6 +8,7 @@ compiled in.
 from .engine import Engine, Entity, Item
 from .errors import (
     BadDirective,
+    BadLicence,
     BadLocator,
     DuplicateFormat,
     MissingFormat,
@@ -40,6 +41,7 @@ from .errors import (
     UnknownFormat,
     UnknownTransform,
 )
+from .licence import PROFILES
 from .modeldef import Derive, Key, Module, load_model_file, parse_model_text
 from .packdef import Pack, load_pack, parse_pack_text
 
@@ -53,7 +55,7 @@ __all__ = [
     "MissingDistribution", "MissingSource", "DistributionRefused", "UnknownModule",
     "DistributionViolation", "ModuleNotUsed", "UndeclaredKey", "KeyTypeMismatch",
     "DuplicateModule", "DuplicateKey",
-    "NoKind", "DuplicateKind", "DuplicateField", "BadDirective",
+    "NoKind", "DuplicateKind", "DuplicateField", "BadDirective", "BadLicence", "PROFILES",
     "BadLocator", "DuplicateFormat", "MissingFormat", "MissingModule", "MissingVersion", "MissingWire",
     "UnknownWire", "UnterminatedQuote",
 ]

@@ -9,7 +9,9 @@ wire"). `<word>:<pos>:<len>` addresses `len` bits starting at bit
 Bit order (`bit_order`): with `lsb`, bit `i` of the message is bit `i mod 8` of
 byte `i div 8` and a field's first bit is its least significant; with `msb`, bit
 `i` is bit `7 - (i mod 8)` of byte `i div 8` and a field's first bit is its most
-significant.
+significant; with `msb-lsb` (0.22), bit `i` is placed as with `msb` and a field's
+first bit is its least significant, as with `lsb` (its value is the `msb` value
+with its `len` bits reversed).
 
 A field's raw value is its bits as an unsigned integer, which the field's
 transform interprets; an `ascii` field's raw value is its bytes, first to last,
@@ -37,27 +39,8 @@ the block holds; encode chooses the held blocks in `_choose` (steps 1 to 4),
 writes them in `_emit` (step 5) and checks the output in `write` (step 6).
 """
 
-import re
-
 from .errors import MalformedWire, TransformEncodeFailure
-
-
-_HEX_WS = {ord(c): None for c in " \t\r\n"}
-_NOT_HEX = re.compile("[^0-9a-fA-F]")
-
-
-def _hex_to_bytes(data, fmt):
-    """Hex text -> bytes (ruling 36 of 0.8). Space, tab, carriage return and
-    line feed are ignored wherever they stand; any other character that is not
-    one of `0-9a-fA-F` (a sign, a digit of another script, any other white
-    space) and an odd number of digits are `malformed-wire`."""
-    cleaned = data.translate(_HEX_WS)
-    bad = _NOT_HEX.search(cleaned)
-    if bad is not None:
-        raise MalformedWire("input is not hexadecimal: character %r" % bad.group(), format=fmt)
-    if len(cleaned) % 2 != 0:
-        raise MalformedWire("hex input has an odd number of digits", format=fmt)
-    return bytes.fromhex(cleaned)
+from .octets import hex_to_bytes as _hex_to_bytes  # shared with `protobuf` and `tlv`; wire_seq imports it here
 
 
 def _armor_values():
@@ -152,6 +135,17 @@ def message_bytes(pack, lines):
     return -(-end // word_bits) * pack.word_bytes
 
 
+def reverse_bits(v, length):
+    """The `length` bits of `v` in the opposite order (`msb-lsb`, 0.22)."""
+    return int(format(v, "0%db" % length)[::-1], 2) if length else 0
+
+
+def layout(pack):
+    """-> (high, rev): how the pack places bits in bytes and values in bits."""
+    order = pack.bit_order
+    return order != "lsb", order == "msb-lsb"
+
+
 class Message:
     """The input bytes, held as one integer in the pack's bit order. It is also
     the view of the top scope: `msg` is itself and `base` is 0."""
@@ -160,8 +154,11 @@ class Message:
 
     def __init__(self, pack, buf):
         self.nbits = len(buf) * 8
-        self.msb = pack.bit_order == "msb"
-        self.value = int.from_bytes(buf, "big" if self.msb else "little")
+        order = pack.bit_order
+        self.msb = order == "msb"           # a field's first bit is its most significant
+        self.high = order != "lsb"          # bit `i` is bit `7 - (i mod 8)` of its byte
+        self.rev = order == "msb-lsb"       # 0.22: placed as `msb`, valued as `lsb`
+        self.value = int.from_bytes(buf, "big" if self.high else "little")
         self.msg = self
 
     @classmethod
@@ -176,8 +173,9 @@ class Message:
     def uint(self, start, length):
         """The `length` bits from bit `start` as an unsigned integer. The caller
         has checked that they lie within the input."""
-        if self.msb:
-            return (self.value >> (self.nbits - start - length)) & ((1 << length) - 1)
+        if self.high:
+            v = (self.value >> (self.nbits - start - length)) & ((1 << length) - 1)
+            return reverse_bits(v, length) if self.rev else v
         return (self.value >> start) & ((1 << length) - 1)
 
 
@@ -394,11 +392,12 @@ class _Buf:
     sentinel wrote (ruling 7 of 0.17). `written` holds the bits a STRONG or
     GATE write covered (step 3, ruling 11)."""
 
-    __slots__ = ("nbits", "msb", "acc", "strong", "written")
+    __slots__ = ("nbits", "msb", "acc", "strong", "written", "rev")
 
-    def __init__(self, nbits, msb):
+    def __init__(self, nbits, msb, rev=False):
         self.nbits = nbits
         self.msb = msb
+        self.rev = rev  # `msb-lsb`: values are written with their bits reversed (0.22)
         self.acc = 0
         self.strong = 0
         self.written = 0
@@ -408,6 +407,8 @@ class _Buf:
         return shift, ((1 << length) - 1) << shift
 
     def write(self, start, length, v, flag):
+        if self.rev:
+            v = reverse_bits(v & ((1 << length) - 1), length)
         shift, m = self._mask(start, length)
         full = m
         if flag == GATE:
@@ -424,7 +425,8 @@ class _Buf:
 
     def read(self, start, length):
         shift, m = self._mask(start, length)
-        return (self.acc & m) >> shift
+        v = (self.acc & m) >> shift
+        return reverse_bits(v, length) if self.rev else v
 
 
 def _field_ops(pack, enc, base, ops, keep):
@@ -537,7 +539,7 @@ def _choose(pack, enc):
             nbits = max(nbits, _start(pack, ln.loc) + ln.loc[2])
     for g in gates:
         nbits = max(nbits, _start(pack, g.loc) + g.loc[2])
-    buf = _Buf(nbits, pack.bit_order == "msb")
+    buf = _Buf(nbits, *layout(pack))
     ops = []
     outside = dict.fromkeys(gates, False)
     _field_ops(pack, enc, 0, ops, outside)
@@ -667,8 +669,8 @@ def write(pack, enc):
         word_bits = pack.word_bytes * 8
         nbytes = -(-end // word_bits) * pack.word_bytes
         nbits = nbytes * 8
-        msb = pack.bit_order == "msb"
-    acc = _lay_out(ops, nbits, msb, bool(checks))
+        msb = pack.bit_order != "lsb"
+    acc = _lay_out(ops, nbits, msb, bool(checks), pack.bit_order == "msb-lsb")
     if armored:
         msg = Message.from_bits(pack, acc, nbits) if checks else None
     else:
@@ -682,18 +684,20 @@ def write(pack, enc):
     return armored_text(acc, end) if armored else out.hex()
 
 
-def _lay_out(ops, nbits, msb, gated=False):
+def _lay_out(ops, nbits, msb, gated=False, rev=False):
     """The `nbits` bits the writes give, as one integer in bit order; a later
     write stands over an earlier one, except that a gate value is written only
     over bits that only a `default` or a sentinel wrote (`gated`, ruling 7 of
-    0.17)."""
+    0.17). With `rev` (`msb-lsb`, 0.22) each value's bits are reversed."""
     if gated:
-        buf = _Buf(nbits, msb)
+        buf = _Buf(nbits, msb, rev)
         for op in ops:
             buf.write(*op)
         return buf.acc
     acc = 0
     for start, length, v, _ in ops:
+        if rev:
+            v = reverse_bits(v & ((1 << length) - 1), length)
         shift = nbits - start - length if msb else start
         mask = (1 << length) - 1
         acc = (acc & ~(mask << shift)) | ((v & mask) << shift)

@@ -15,7 +15,7 @@ written.
 """
 
 from .errors import MalformedWire
-from .wire_bits import _hex_to_bytes
+from .octets import hex_to_bytes as _hex_to_bytes
 
 VARINT, FIXED64, LEN, FIXED32 = 0, 1, 2, 5
 MAX_FIELD_NUMBER = (1 << 29) - 1  # ruling 38 of 0.8

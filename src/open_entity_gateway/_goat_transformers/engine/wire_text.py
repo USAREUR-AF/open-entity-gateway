@@ -18,7 +18,9 @@ import re
 from datetime import date
 
 from .errors import BadDirective, MalformedWire, TransformEncodeFailure
-from .transforms import Iso8601MsT, StringT, Transform, format_float, format_int, round_half_away
+from .transforms import (
+    Iso8601MsT, Iso8601ST, StringT, Transform, format_float, format_int, is_text_only_name, round_half_away, text_params,
+)
 
 _HEX = "0123456789abcdefABCDEF"
 _DIGITS = re.compile(r"[0-9]+\Z")
@@ -322,55 +324,32 @@ class _TextIso(Iso8601MsT):
     pair = False
 
 
-_BASE = {"string": _TextString(), "int": TextIntT("int"), "float": TextFloatT(), "iso8601_ms": _TextIso()}
-_FAMILIES = ("int", "dec", "dm", "hms", "hms_dmy")
+class _TextIsoS(Iso8601ST):
+    numeric = False
+    pair = False
 
 
-def is_text_only_name(name):
-    """A transform valid only on the `text` wire, well formed or not: `int:…`,
-    `dec`, `dec:…`, `dm`, `dm:…`, `hms`, `hms:…`, `hms_dmy`, `hms_dmy:…`."""
-    head, sep, _ = name.partition(":")
-    if head == "int":
-        return bool(sep)
-    return head in _FAMILIES
-
-
-def _param(text, lo, hi):
-    if not (text.isascii() and _DIGITS.match(text)):
-        raise ValueError
-    n = int(text)
-    if n < lo or n > hi:
-        raise ValueError
-    return n
-
-
+_BASE = {
+    "string": _TextString(), "int": TextIntT("int"), "float": TextFloatT(), "iso8601_ms": _TextIso(),
+    "iso8601_s": _TextIsoS(),
+}
 def build_transform(name):
     """-> the transform of `name` on the `text` wire, or None when the name is
     not a transform of this wire. A text-only name with bad parameters raises
-    ValueError (`bad-directive`, rule 1)."""
+    ValueError (`bad-directive`, rule 1); `transforms.text_params` reads them."""
     t = _BASE.get(name)
     if t is not None:
         return t
     if not is_text_only_name(name):
         return None
-    parts = name.split(":")
-    head, args = parts[0], parts[1:]
-    try:
-        if head == "int" and len(args) == 1:
-            return TextIntT(name, _param(args[0], 1, 20))
-        if head == "dec" and len(args) in (1, 2):
-            return DecT(name, _param(args[0], 0, 9), _param(args[1], 1, 20) if len(args) == 2 else 0)
-        if head == "dm" and len(args) == 3:
-            letters = args[2]
-            if len(letters) != 2 or letters[0] == letters[1] or not all("A" <= c <= "Z" for c in letters):
-                raise ValueError
-            return DmT(name, _param(args[0], 1, 3), _param(args[1], 0, 9), letters[0], letters[1])
-        if head in ("hms", "hms_dmy") and len(args) == 1:
-            f = _param(args[0], 0, 3)
-            return HmsT(name, f) if head == "hms" else HmsDmyT(name, f)
-    except ValueError:
-        pass
-    raise ValueError("transform %r: bad or missing parameters" % name)
+    head, p = text_params(name)
+    if head == "int":
+        return TextIntT(name, *p)
+    if head == "dec":
+        return DecT(name, *p)
+    if head == "dm":
+        return DmT(name, *p)
+    return HmsT(name, *p) if head == "hms" else HmsDmyT(name, *p)
 
 
 # --- load checks --------------------------------------------------------------

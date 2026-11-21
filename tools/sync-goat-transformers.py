@@ -23,18 +23,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEST = ROOT / "src" / "open_entity_gateway" / "_goat_transformers"
-ENGINE = [
-    "__init__.py", "derive16.py", "engine.py", "entity.py", "errors.py", "modeldef.py", "packdef.py", "seqdef.py",
-    "transforms.py", "wire_bits.py", "wire_geojson.py", "wire_json.py", "wire_protobuf.py", "wire_seq.py",
-    "wire_text.py", "wire_tlv.py", "wire_xml.py", "uper.py",
-]  # fmt: skip
+# Every module of the engine package is copied but its command-line front end, which the
+# gateway does not run. The list is read from the checkout, so a module goat-transformers
+# adds is copied with the rest (spec 0.24 added _build.py, jsonio.py and octets.py, and
+# 0.29 licence.py; a fixed list failed to load the packs each time).
+ENGINE_DIR = "engines/python/src/goat_transformers"
+NOT_COPIED = {"__main__.py", "cli.py"}
 MODELS = ["core", "track", "cat062", "sapient"]
 PACKS = ["canonical-track-v2", "cot-xml", "asterix-cat062", "sapient"]
 
 
 def files(source: Path) -> dict[str, Path]:
     """Copied path (relative to DEST) -> source path."""
-    out = {f"engine/{name}": source / "engines/python/src/goat_transformers" / name for name in ENGINE}
+    engine = source / ENGINE_DIR
+    names = sorted(p.name for p in engine.glob("*.py") if p.name not in NOT_COPIED)
+    out = {f"engine/{name}": engine / name for name in names}
     out.update({f"data/model/{m}.def": source / "model" / f"{m}.def" for m in MODELS})
     out.update({f"data/packs/{p}/pack.def": source / "packs" / p / "pack.def" for p in PACKS})
     return out

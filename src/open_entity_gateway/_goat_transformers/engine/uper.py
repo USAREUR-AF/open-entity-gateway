@@ -10,7 +10,7 @@ the octets for `octets:`.
 import re
 
 from .transforms import _build_scale, round_half_away
-from .wire_tlv import HexT, Utf8T
+from .octets import HexT, Utf8T
 
 INT64_MIN = -(1 << 63)
 INT64_MAX = (1 << 63) - 1

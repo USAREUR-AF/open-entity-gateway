@@ -9,214 +9,12 @@ top-level members (field order, then residue); no insignificant whitespace;
 numbers shortest round-trip.
 """
 
-import json
-import re
-
 from .errors import MalformedWire
+from .jsonio import (  # noqa: F401  (the JSON text the geojson wire shares with json; not json itself)
+    MISSING, Num, RawJSON, canonical_scalar, dump, dump_as_written, dump_string, is_absent, item_text, parse_json,
+    sentinel_text, when_matches, when_text,
+)
 from .packdef import parse_geojson_locator
-from .transforms import canonical_number, format_float
-
-
-MISSING = object()
-
-
-class Num(str):
-    """A JSON number, held as its raw text."""
-
-
-class RawJSON(str):
-    """A canonical JSON value text, written verbatim (residue of non-strings)."""
-
-
-def _pairs(pairs):
-    out = {}
-    for k, v in pairs:
-        if k in out:
-            raise ValueError("duplicate member %r" % k)
-        out[k] = v
-    return out
-
-
-def _const(name):
-    raise ValueError("%s is not valid JSON" % name)
-
-
-MAX_DEPTH = 64  # ruling 35 of 0.8: arrays and objects, the outermost is level 1
-
-# A whole string, a quote that opens no whole string, or one bracket outside a
-# string.
-_STRING_OR_BRACKET = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|"|[\[\]{}]', re.S)
-_SURROGATE_ESCAPE = re.compile(r"\\u[dD][89a-fA-F]")
-# One escape: a surrogate pair, a `u` escape, or any other escaped character.
-_ESCAPE = re.compile(r"\\(?:u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|u([0-9a-fA-F]{4})|.)", re.S)
-
-
-def _check_depth(data, fmt):
-    """Refuse an input nested deeper than MAX_DEPTH before it is parsed, in one
-    pass that uses no stack."""
-    if data.count("[") + data.count("{") <= MAX_DEPTH:
-        return
-    depth = 0
-    for m in _STRING_OR_BRACKET.finditer(data):
-        c = data[m.start()]
-        if c == "[" or c == "{":
-            depth += 1
-            if depth > MAX_DEPTH:
-                raise MalformedWire("nested deeper than %d levels" % MAX_DEPTH, format=fmt)
-        elif c == '"':
-            if m.end() - m.start() == 1:
-                raise MalformedWire("not JSON: unterminated string at offset %d" % m.start(), format=fmt)
-        elif depth:
-            depth -= 1
-
-
-def _check_surrogates(data, fmt):
-    """An escape of a surrogate that is not half of a pair names no character,
-    and no UTF-8 output can hold it: `malformed-wire`."""
-    for m in _ESCAPE.finditer(data):
-        code = m.group(1)
-        if code is not None and 0xD800 <= int(code, 16) <= 0xDFFF:
-            raise MalformedWire("not JSON: unpaired surrogate escape u%s" % code, format=fmt)
-
-
-def parse_json(data, fmt, duplicates=False):
-    """`duplicates`: accept a member name given twice in one object (the last
-    value stands). The `json` wire refuses it (0.5 ruling 22); `geojson` keeps
-    its 0.1 behaviour and accepts it (0.5 ruling 28)."""
-    _check_depth(data, fmt)
-    if _SURROGATE_ESCAPE.search(data) is not None:
-        _check_surrogates(data, fmt)
-    try:
-        return json.loads(
-            data, parse_float=Num, parse_int=Num, parse_constant=_const,
-            object_pairs_hook=dict if duplicates else _pairs,
-        )
-    except ValueError as e:
-        raise MalformedWire("not JSON: %s" % e, format=fmt)
-    except RecursionError:  # not reached: the nesting is checked above
-        raise MalformedWire("not JSON: nested too deeply", format=fmt)
-
-
-def dump(v):
-    """Canonical JSON text of a parsed value."""
-    if isinstance(v, RawJSON):
-        return str(v)
-    if isinstance(v, Num):
-        return canonical_number(str(v))
-    if isinstance(v, str):
-        return dump_string(v)
-    if v is True:
-        return "true"
-    if v is False:
-        return "false"
-    if v is None:
-        return "null"
-    if isinstance(v, dict):
-        return "{" + ",".join(dump_string(k) + ":" + dump(x) for k, x in v.items()) + "}"
-    if isinstance(v, list):
-        return "[" + ",".join(dump(x) for x in v) + "]"
-    raise TypeError("cannot write %r as JSON" % (v,))
-
-
-def dump_as_written(v):
-    """JSON text of a parsed array or object that comes back as it was (0.6
-    ruling 13): a number keeps its text as written; no insignificant
-    whitespace."""
-    if isinstance(v, Num):
-        return str(v)
-    if isinstance(v, dict):
-        return "{" + ",".join(dump_string(k) + ":" + dump_as_written(x) for k, x in v.items()) + "}"
-    if isinstance(v, list):
-        return "[" + ",".join(dump_as_written(x) for x in v) + "]"
-    return dump(v)
-
-
-_ESC = {'"': '\\"', "\\": "\\\\", "\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
-
-
-def dump_string(s):
-    out = ['"']
-    for ch in s:
-        e = _ESC.get(ch)
-        if e is not None:
-            out.append(e)
-        elif ord(ch) < 0x20:
-            out.append("\\u%04x" % ord(ch))
-        else:
-            out.append(ch)
-    out.append('"')
-    return "".join(out)
-
-
-_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
-
-
-def canonical_scalar(v, fmt=None):
-    """Canonical JSON text of a parsed number, or None for any other value."""
-    try:
-        return canonical_number(str(v))
-    except (ValueError, OverflowError):
-        raise MalformedWire("number %s is out of range" % v, format=fmt)
-
-
-def when_matches(when, value, fmt=None):
-    """Whether a parsed JSON member value satisfies a `when` (spec 0.5): a string
-    equal to the text, or a number or boolean whose canonical text equals it;
-    `present`: any value but `null`. `value` is MISSING when the member is absent."""
-    if value is MISSING or value is None:
-        return False
-    if when.present:
-        return True
-    texts = when.texts  # 0.20: any value of the list
-    if isinstance(value, Num):
-        return canonical_scalar(value, fmt) in texts
-    if isinstance(value, str):
-        return value in texts
-    if value is True:
-        return "true" in texts
-    if value is False:
-        return "false" in texts
-    return False
-
-
-def when_text(when):
-    """The JSON text a `when` value is written with (0.5 ruling 11): canonical
-    JSON number text as a number, `true` / `false` as booleans, anything else,
-    and any value written with a leading `=`, as a string."""
-    v = when.value
-    if not when.forced:
-        if v in ("true", "false"):
-            return v
-        if _NUMBER.match(v):
-            try:
-                if canonical_number(v) == v:
-                    return v
-            except (ValueError, OverflowError):
-                pass
-    return dump_string(v)
-
-
-def sentinel_text(value):
-    """The raw text a sentinel is compared with on `json` and `geojson` (spec
-    0.9): a string's text, a number's canonical text through a double
-    (ruling 19), `true` or `false`; None for `null`, an object or an array."""
-    if isinstance(value, Num):
-        try:
-            return format_float(float(value))
-        except (ValueError, OverflowError):
-            return None
-    if isinstance(value, str):
-        return value
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    return None
-
-
-def is_absent(pack, field, raw):
-    text = sentinel_text(raw)
-    return text is not None and text in field.absent
 
 
 def when_holds(pack, first, when):
@@ -344,11 +142,12 @@ def write(pack, items):
     return "{" + ",".join(parts) + "}"
 
 
-def encode(pack, enc, residue, item_text):
+def encode(pack, enc, residue):
     """The canonical Feature of the encoded top scope and the entity's
     residue. A `when` or `const` value is typed as on `json` (0.5 ruling 11);
-    a list is an array whose items are written by `item_text` (the `json`
-    wire's, ruling 7 of 0.7)."""
+    a list is an array whose items are written by `item_text` (as on the
+    `json` wire, ruling 7 of 0.7; `jsonio` holds it, so no `json` codec is
+    needed, ruling 1d of 0.24)."""
     plan = enc.plan
     resolved = {}
     for ln in plan.lines:

@@ -161,6 +161,14 @@ class UnknownFormat(GTError):
     code = "unknown-format"
 
 
+class BadLicence(GTError):
+    """Version 0.29: a licence file (`licences.toml`, a pack's `REUSE.toml`,
+    a module's `.def.license`) that cannot be read as ruling 1 says, or, in a
+    library, a profile name not one of the three (ruling 3a)."""
+
+    code = "bad-licence"
+
+
 class MalformedWire(GTError):
     code = "malformed-wire"
 
