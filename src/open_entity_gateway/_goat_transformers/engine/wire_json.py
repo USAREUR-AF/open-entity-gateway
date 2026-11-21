@@ -2,9 +2,9 @@
 
 A path is one or more member names separated by `.`; each name but the last
 addresses a nested object (spec/engine-spec.md, "The `json` wire"). Parsing uses
-the standard library `json` module with the hooks of the geojson wire, which
-keep every number as its raw text and refuse duplicate members and
-NaN/Infinity. Serialisation is the canonical writer below.
+the standard library `json` module with the hooks of `jsonio`, which keep
+every number as its raw text and refuse duplicate members and NaN/Infinity.
+Serialisation is the canonical writer of `jsonio`.
 
 Residue is every scalar member (string, number, boolean) at any depth of nested
 objects that no line maps, keyed by its path, with its canonical JSON text.
@@ -13,8 +13,9 @@ dropped with everything inside it.
 """
 
 from .errors import MalformedWire
-from .wire_geojson import (
-    MISSING, Num, canonical_scalar, dump_string, is_absent, parse_json, when_matches, when_text,  # noqa: F401
+from .jsonio import (  # noqa: F401
+    MISSING, Num, canonical_scalar, dump_string, is_absent, item_text, parse_json, resolve, when_matches, when_text,
+    write,
 )
 
 
@@ -97,97 +98,6 @@ def residue(pack, doc, mapped):
 
     walk(doc, "")
     return out
-
-
-class _Obj:
-    """A member being written: a scalar's JSON text, or the members of an object."""
-
-    __slots__ = ("text", "members")
-
-    def __init__(self):
-        self.text = None
-        self.members = {}
-
-
-def _slot(root, path):
-    node = root
-    for name in path:
-        child = node.members.get(name)
-        if child is None:
-            child = node.members[name] = _Obj()
-        node = child
-    return node
-
-
-def _ser(node):
-    """-> JSON text, or None when the member is not written (an absent scalar,
-    or an object that would have no members)."""
-    if node.text is not None:
-        return node.text
-    parts = []
-    for name, child in node.members.items():
-        text = _ser(child)
-        if text is not None:
-            parts.append(dump_string(name) + ":" + text)
-    return "{" + ",".join(parts) + "}" if parts else None
-
-
-def write(pack, order, resolved, residue_items):
-    """`order` is every line's locator in line order (common lines first), each
-    once; `resolved` maps a locator to the JSON text written there. A member, and
-    each nested object on its path, takes the position of the first line that
-    addresses it, whether or not that line writes a value. Residue members
-    follow in input order. An object with no members is not written; the
-    message itself is always an object."""
-    root = _Obj()
-    for locator in order:
-        slot = _slot(root, locator.split("."))
-        if locator in resolved and slot.text is None:
-            slot.text = resolved[locator]
-    for locator, text in residue_items:
-        slot = _slot(root, locator.split("."))
-        if slot.text is None and not slot.members:
-            slot.text = text
-    return _ser(root) or "{}"
-
-
-def resolve(pack, enc):
-    """-> {locator: JSON text} of one encoded scope. A locator's value is a
-    `when` or `const` value if such a line names it, otherwise that of the
-    earliest line whose key has a value. A list is an array of its items; an
-    empty list is `[]`."""
-    plan = enc.plan
-    lines = plan.lines
-    resolved = {}
-    for ln in lines:
-        if ln.is_field or ln.is_group or ln.present or ln.locator in resolved:
-            continue
-        resolved[ln.locator] = when_text(ln)
-    values = enc.values
-    sentinels = enc.sentinels
-    for i, ln in plan.ifields:
-        if i in values and ln.locator not in resolved and i not in sentinels:
-            out = values[i]
-            resolved[ln.locator] = dump_string(out) if ln.transform.kind == "string" else out
-    for i, ln in plan.ifields:  # a sentinel where no field with a value writes (ruling 16 of 0.9)
-        if i in sentinels and ln.locator not in resolved:
-            resolved[ln.locator] = values[i]
-    for i, g in plan.igroups:
-        children = enc.groups.get(i)
-        if children is not None and g.locator not in resolved:
-            resolved[g.locator] = "[" + ",".join([item_text(pack, c) for c in children]) + "]"
-    return resolved
-
-
-def item_text(pack, enc):
-    """The JSON text of one item: the scalar of its `.` field (`null` when the
-    item has no value for it), otherwise an object, `{}` when no member is
-    written."""
-    resolved = resolve(pack, enc)
-    plan = enc.plan
-    if "." in plan.mapped:
-        return resolved.get(".", "null")
-    return write(pack, plan.order, resolved, ())
 
 
 def encode(pack, enc, residue):

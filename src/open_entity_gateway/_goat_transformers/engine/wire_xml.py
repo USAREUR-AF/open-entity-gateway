@@ -356,24 +356,24 @@ def _fill(node, enc):
     whose key has a value. A group writes one element per item at its
     position; an empty list writes nothing."""
     plan = enc.plan
-    first = plan.cache.get("first")
-    if first is None:
-        first = plan.cache["first"] = {}
-        at = plan.cache["first_at"] = {}
+    # The layout of the scope, worked out once and kept with the plan (spec
+    # 0.25, ruling 1a); built whole, then published, so a thread never sees
+    # a half-built one (ruling 1c).
+    layout = plan.cache.get("xml-fill")
+    if layout is None:
+        first = {}
+        first_at = {}
         for i, ln in enumerate(plan.lines):
             if (ln.is_field or not ln.present) and ln.locator not in first:
                 first[ln.locator] = ln
-                at[ln.locator] = i
-        plan.cache["elements"] = _element_places(plan)
-    first_at = plan.cache["first_at"]
-    elements = plan.cache["elements"]
-    ei = 0
-    fixed = plan.cache.get("fixed")
-    if fixed is None:  # the `when` and `const` values, the first for each locator
-        fixed = plan.cache["fixed"] = {}
+                first_at[ln.locator] = i
+        fixed = {}  # the `when` and `const` values, the first for each locator
         for ln in plan.lines:
             if not (ln.is_field or ln.is_group or ln.present):
                 fixed.setdefault(ln.locator, ln.value)
+        layout = plan.cache["xml-fill"] = (first, first_at, _element_places(plan), fixed)
+    first, first_at, elements, fixed = layout
+    ei = 0
     resolved = dict(fixed)
     values = enc.values
     sentinels = enc.sentinels

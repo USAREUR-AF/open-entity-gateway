@@ -16,8 +16,8 @@ import re
 import struct
 
 from .errors import MalformedWire, TransformEncodeFailure
-from .transforms import Transform, _build_scale, _finite_number, _finite_wire, _pack_single
-from .wire_bits import _hex_to_bytes
+from .transforms import _build_scale, _finite_number, _finite_wire, _pack_single
+from .octets import HexT, TlvTransform, Utf8T, hex_to_bytes as _hex_to_bytes  # shared with `bits` (0.19)
 
 MAX_TAG = (1 << 28) - 1
 DIRECTIVES = ("tag", "length", "key", "checksum")
@@ -99,11 +99,6 @@ def _int_bytes(name, raw):
 def _signed(raw, v):
     bits = 8 * len(raw)
     return v - (1 << bits) if v >> (bits - 1) else v
-
-
-class TlvTransform(Transform):
-    kind = "tlv"
-    empty_ok = False  # an empty value is absent (ruling 1); `utf8` and `hex` read it as ""
 
 
 class UintT(TlvTransform):
@@ -202,34 +197,6 @@ class F64T(TlvTransform):
         if not math.isfinite(x):
             raise ValueError("f64: %r is not finite" % value)
         return struct.pack(">d", x)
-
-
-class Utf8T(TlvTransform):
-    name = "utf8"
-    yields = "string"
-    empty_ok = True
-
-    def decode(self, raw):
-        return bytes(raw).decode("utf-8")  # strict: invalid UTF-8 is a ValueError
-
-    def encode(self, value):
-        if not isinstance(value, str):
-            raise ValueError("utf8 transform needs a str, got %s" % type(value).__name__)
-        return value.encode("utf-8")
-
-
-class HexT(TlvTransform):
-    name = "hex"
-    yields = "string"
-    empty_ok = True
-
-    def decode(self, raw):
-        return bytes(raw).hex()
-
-    def encode(self, value):
-        if not isinstance(value, str) or not value.isascii() or _HEX_TEXT.match(value) is None:
-            raise ValueError("hex: %r is not an even number of hex digits" % (value,))
-        return bytes.fromhex(value)
 
 
 def build_transform(name, size):
@@ -512,7 +479,7 @@ def _named(plan):
     present` does not name the last tag of its path (ruling 7)."""
     named = plan.cache.get("tlv")
     if named is None:
-        named = plan.cache["tlv"] = {}
+        named = {}  # built whole, then kept with the plan (spec 0.25, rulings 1a and 1c)
         for ln in plan.lines:
             if ln.is_group:
                 continue
@@ -522,6 +489,7 @@ def _named(plan):
                 if d == last and not ln.is_field and ln.present:
                     continue
                 named.setdefault(tags[:d], set()).add(t)
+        plan.cache["tlv"] = named
     return named
 
 

@@ -23,12 +23,12 @@ after the last line, not rounded to a byte, zero-filled to a multiple of 6.
 from .entity import Entity, Item, _via_decode, _via_encode
 from .errors import GTError, MalformedWire, NoKind, TransformDecodeFailure, TransformEncodeFailure
 from .seqdef import (
-    T_ALIGN, T_CHAIN, T_CHOICE, T_CONST, T_EXT, T_FIELD, T_GROUP, T_IF, T_LENGTH, T_OPT, T_PAD, T_PRESENCE,
-    T_SWITCH, T_WHEN, T_WHOLE, children,
+    T_ALIGN, T_CHAIN, T_CHOICE, T_CONST, T_COUNT, T_EXT, T_FIELD, T_GROUP, T_IF, T_LENGTH, T_OPT, T_PAD,
+    T_PRESENCE, T_SWITCH, T_WHEN, T_WHOLE, children,
 )
 from .transforms import value_canon
 from .uper import INT64_MAX, twos_octets, uint_octets
-from .wire_bits import Message, _hex_to_bytes, _swap_int, armored_message, armored_text, raw_int, sixbit_values
+from .wire_bits import reverse_bits, Message, _hex_to_bytes, _swap_int, armored_message, armored_text, raw_int, sixbit_values
 
 _NONE = frozenset()
 
@@ -42,6 +42,16 @@ class _UperValue:
     def __init__(self, v, f):
         self.v = v
         self.f = f
+
+
+class _UntilCodes:
+    """What a field line with the locator `until:<code>` writes (0.22): the
+    codes of its characters; `_Writer.field` adds the terminator."""
+
+    __slots__ = ("codes",)
+
+    def __init__(self, codes):
+        self.codes = codes
 
 
 _UPER_ABSENT = object()  # a UPER locator whose key is absent: the value of ruling 1 of 0.19
@@ -123,6 +133,10 @@ class _Reader:
         self.pos = 0
         self.hard = self.msg.nbits
         self.soft = []      # the ends of the open `length` blocks, outermost first
+        # 0.21: the unit of each open `length` block ("bytes" | "bits"), None for a
+        # block that starts at or past the end of its enclosing extent (not read)
+        self.units = []
+        self.counts = {}    # 0.21: count node -> the number of items it states, None when not read
         self.env = {}       # presence node -> the set of its bits that are 1
         self.failures = []  # (key, locator, reason)
         # 0.20 ruling 21: the bits that are 1 and that only `if` lines of cases
@@ -184,6 +198,8 @@ class _Reader:
                     self.run(nd.body, sc)
             elif t == T_GROUP:
                 self.group(nd, sc)
+            elif t == T_COUNT:
+                self.count(nd)
             elif t == T_CHAIN:
                 self.chain(nd, sc)
             elif t == T_LENGTH:
@@ -361,6 +377,9 @@ class _Reader:
                 return
             self.values(nd, sc, raw)
             return
+        if nd.until is not None:
+            self.until(nd, sc)
+            return
         length = nd.length
         start = self.take(length, "a field of %d bit(s)" % length)
         if start is None:
@@ -382,6 +401,35 @@ class _Reader:
             if raw_int(raw, msg.msb) in first.absent:  # `sixbit` too (ruling 12 of 0.14)
                 return
         self.values(nd, sc, raw)
+
+    def until(self, nd, sc):
+        """`until:<code> chars:<set>` (0.22): characters up to the terminator,
+        which is consumed. A field that starts at the end of a `length` extent
+        is absent; reaching the end of the extent, or more than `2040 / w`
+        characters, before the terminator is `malformed-wire` (rulings 4 and
+        8). The terminator is found from the codes alone; the characters are
+        decoded after it, so a bad one is `transform-decode` and the cursor
+        stands after the terminator (ruling 5)."""
+        if self.at_soft_end():
+            return
+        t = nd.until
+        w = t.width
+        msg = self.msg
+        end = self.limit()
+        codes = []
+        what = "the terminator %d of field %s" % (t.code, nd.bindings[0].key)
+        while True:
+            if self.pos + w > end:
+                raise self.short(what)
+            c = msg.uint(self.pos, w)
+            self.pos += w
+            if c == t.code:
+                break
+            if len(codes) == t.most:
+                raise MalformedWire("%s: more than %d character(s) before it" % (what, t.most),
+                                    format=self.pack.name)
+            codes.append(c)
+        self.values(nd, sc, codes)
 
     def values(self, nd, sc, raw):
         """Decode the raw value of a field line into each of its keys."""
@@ -494,10 +542,12 @@ class _Reader:
             if end > self.limit():
                 raise self.short("the block a length states")
         self.soft.append(end)
+        self.units.append(None if start is None else nd.unit)
         try:
             self.run(nd.body, sc)
         finally:
             self.soft.pop()
+            self.units.pop()
         self.pos = end  # content of the extent no line reads is skipped
 
     def whole(self, nd):
@@ -528,11 +578,59 @@ class _Reader:
         if old and self.left is not None:
             self.left += _held(old)
 
+    def count(self, nd):
+        """0.21: a count line; below its `plus` is `malformed-wire`, checked here."""
+        start = self.take(nd.length, "the count %s" % nd.name)
+        if start is None:  # at or past the end of a length extent: its group is absent
+            self.counts[nd] = None
+            return
+        v = self.msg.uint(start, nd.length)
+        if v < nd.plus:
+            raise MalformedWire("count %s states %d, less than its 'plus %d'" % (nd.name, v, nd.plus),
+                                format=self.pack.name)
+        self.counts[nd] = v - nd.plus
+
     def group(self, nd, sc):
         mode = nd.mode
         msg = self.msg
         items = []
-        if mode == "count" or mode == "size":
+        if mode == "count" and nd.count_node is not None:  # 0.21: the count read earlier
+            n = self.counts.get(nd.count_node)
+            if n is None or (self.soft and self.pos >= self.soft[-1]):
+                return  # ruling 6: the count was not read, or the group is past the extent's end
+            self.replaces(nd, sc)
+            if self.left is not None and n > self.left:  # before any item is read (ruling 7d of 0.11)
+                raise self.over(nd, n)
+            if n > self.limit() - self.pos:  # ruling 20: the bits left at the group
+                raise self.short("the %d item(s) of group %s" % (n, nd.list))
+            for i in range(n):
+                items.append(self.item(nd, sc, i))
+        elif mode == "rest":  # 0.21: items while bits remain in the extent
+            if self.units and self.units[-1] is None:
+                return  # the block is not read: the list stays absent (ruling 3)
+            self.replaces(nd, sc)
+            end = self.limit()
+            least = 1 if self.units and self.units[-1] == "bits" else 8
+            while end - self.pos >= least:
+                at = self.pos
+                items.append(self.item(nd, sc, len(items)))
+                if self.pos == at:  # ruling 1
+                    raise MalformedWire("an item of group %s reads no bits" % nd.list, format=self.pack.name)
+            if self.pos < end:
+                self.pos = end  # padding, whatever its value (ruling 17)
+        elif mode == "last":  # 0.21: each item is preceded by one bit, 1 on the last
+            start = self.take(1, "the bit before an item of group %s" % nd.list)
+            if start is None:
+                return  # ruling 34 of 0.8: the first indicator at the extent end, an absent list
+            self.replaces(nd, sc)
+            while True:
+                items.append(self.item(nd, sc, len(items)))
+                if msg.uint(start, 1):
+                    break
+                start = self.take(1, "the bit before an item of group %s" % nd.list)
+                if start is None:  # ruling 13
+                    raise self.short("the bit before item %d of group %s" % (len(items), nd.list))
+        elif mode == "count" or mode == "size":
             if mode == "size":
                 if self.at_soft_end():
                     return
@@ -711,6 +809,14 @@ class _Writer:
         self.known = known or {}
         self.used = {}
         self.actual = {}
+        # 0.21: each count line written, [start, node, value], filled in when its
+        # group is laid out and checked when the message is finished (ruling 30);
+        # the latest of each count node; the open extents, innermost last, each
+        # [first bit, unit, (first bit of a `rest` item, node) ...] (rulings 4, 21, 34)
+        self.count_recs = []
+        self.count_cur = {}
+        self.extents = [[0, "bytes", []]]
+        self.rest_last = []  # per `rest` item being written: it is its list's last (ruling 10)
 
     def mismatch(self):
         actual = self.actual
@@ -854,6 +960,11 @@ class _Writer:
                     self.pos += 1
             elif t == T_GROUP:
                 self.group(nd, ctx)
+            elif t == T_COUNT:  # written when its group is laid out; an absent list writes `n`
+                rec = [self.pos, nd, nd.plus]
+                self.count_recs.append(rec)
+                self.count_cur[nd] = rec
+                self.pos += nd.length
             elif t == T_CHAIN:
                 parts = nd.parts
                 whole = [ln for part in parts for ln in part] if len(parts) > 1 else None
@@ -871,11 +982,13 @@ class _Writer:
                 at = self.pos
                 self.pos += nd.length
                 start = self.pos
+                self.extents.append([start, nd.unit, []])
                 self.emit(nd.body, ctx)
                 size = self.pos - start
                 if nd.unit == "bytes":  # padded with zero bits to a whole byte
                     self.pos += (-size) % 8
                     size = (self.pos - start) // 8
+                self.check_extent(self.extents.pop(), self.pos)
                 stated = size + nd.plus
                 if not 0 <= stated < (1 << nd.length):
                     raise self.fail("a length of %d does not fit its %d bit(s)" % (stated, nd.length), nd)
@@ -1025,6 +1138,11 @@ class _Writer:
             self.uper_absent(nd)
         elif isinstance(out, _UperValue):
             self.uper_put(nd, out.v, out.f)
+        elif isinstance(out, _UntilCodes):  # 0.22: the characters, then the terminator
+            t = nd.until
+            for c in out.codes:
+                self.put(t.width, c)
+            self.put(t.width, t.code)
         elif out is None:
             self.pos += length
         elif isinstance(out, (bytes, bytearray)):
@@ -1094,6 +1212,8 @@ class _Writer:
                 first = nd.bindings[0]
                 if nd.uper is not None:  # never a sentinel (ruling 22 of 0.19)
                     return _UPER_ABSENT, _uper_absent_raw(nd.uper)
+                if nd.until is not None:  # the terminator alone (0.22, ruling 10)
+                    return _UntilCodes(()), []
                 if first.absent_out is None or not bindings or bindings[0] is not first:  # ruling 20 of 0.18
                     if getattr(first.transform, "as_bytes", False):
                         return None, bytes(length // 8)
@@ -1114,6 +1234,8 @@ class _Writer:
             raise TransformEncodeFailure(str(e), format=self.pack.name, locator=f.locator)
         if nd.uper is not None:  # the value as the UPER locator reads it back (0.19)
             return _UperValue(v, f), v
+        if nd.until is not None:  # the codes, then the terminator (0.22)
+            return _UntilCodes(v), list(v)
         if isinstance(v, (bytes, bytearray)):
             written = bytes(v[::-1] if f.swap else v)
             n = length // 8
@@ -1124,10 +1246,52 @@ class _Writer:
         v = int(v) & ((1 << length) - 1)
         return (_swap_int(v, length) if f.swap else v), v
 
+    def check_extent(self, ext, end):
+        """0.21 rulings 4, 21 and 34: an item of a `rest` group that starts with
+        fewer than 8 bits left (1 in a block counted in bits) before the padded
+        end of its extent would not be read back."""
+        least = 1 if ext[1] == "bits" else 8
+        for at, nd in ext[2]:
+            if end - at < least:
+                raise self.fail("an item of list %s starts %d bit(s) before the end of its extent; decode would "
+                                "not read it" % (nd.list, end - at), nd)
+
     def group(self, nd, ctx):
         items = ctx.lists.get(nd.list) or ()
         n = len(items)
         mode = nd.mode
+        if mode == "rest":  # 0.21: back to back; an empty or absent list writes nothing
+            if nd.tail_rest and self.rest_last and not self.rest_last[-1]:  # ruling 10
+                raise self.fail("list %s ends an item of a 'rest' group that is not the last: decode would read the "
+                                "items after it into the list" % nd.list, nd)
+            ext = self.extents[-1]
+            for i, item in enumerate(items):
+                at = self.pos
+                ictx, lines = self.item_block(nd, item)
+                self.rest_last.append(i == n - 1)
+                self.emit(lines, ictx)
+                self.rest_last.pop()
+                if self.pos == at:  # ruling 29
+                    raise self.fail("an item of list %s writes no bits" % nd.list, nd)
+                ext[2].append((at, nd))
+            return
+        if mode == "last":  # 0.21: one bit before each item, 1 on the last
+            if not n:
+                raise self.fail("list %s is absent or empty; a 'last' group has at least one item on the wire"
+                                % nd.list, nd)
+            for i, item in enumerate(items):
+                self.put(1, 1 if i == n - 1 else 0)
+                ictx, lines = self.item_block(nd, item)
+                self.emit(lines, ictx)
+            return
+        if mode == "count" and nd.count_node is not None:  # 0.21: the count line holds items + `plus`
+            rec = self.count_cur.get(nd.count_node)
+            if rec is not None:
+                rec[2] = n + nd.count_node.plus
+            for item in items:
+                ictx, lines = self.item_block(nd, item)
+                self.emit(lines, ictx)
+            return
         if mode == "size":  # 0.19
             if nd.list not in ctx.lists and nd.lb:  # absent: `lb` items with no keys
                 items = [Item() for _ in range(nd.lb)]
@@ -1163,13 +1327,23 @@ class _Writer:
         """A message is a whole number of bytes: the rest of the last byte is
         zero. Under `armor sixbit` it is the bits up to the cursor, as armored
         text (0.14); no `length ... whole` line is allowed there."""
+        # 0.21: the counts, filled in by their groups (ruling 30), and the items of
+        # `rest` groups against the end of the message (rulings 4, 21 and 34)
+        for at, nd, v in self.count_recs:
+            if not 0 <= v < (1 << nd.length):
+                raise self.fail("count %s holds %d, which does not fit its %d bit(s)" % (nd.name, v, nd.length), nd)
+            if v:
+                self.ops.append((at, nd.length, v))
         if self.pack.armor == "sixbit":
             nbits = self.pos
+            # the message stays counted in bytes for `rest` (ruling 43 of 0.21)
+            self.check_extent(self.extents[0], -(-nbits // 8) * 8)
             acc = 0
             for start, length, v in self.ops:
                 acc |= (v & ((1 << length) - 1)) << (nbits - start - length)
             return armored_text(acc, nbits)
         nbytes = -(-self.pos // 8)
+        self.check_extent(self.extents[0], nbytes * 8)
         if nbytes == 0 and self.pack.uper:  # an encoding of no bits is one octet 00 (X.691 10.1.3)
             nbytes = 1
         for at, nd in self.wholes:
@@ -1178,10 +1352,14 @@ class _Writer:
                 raise self.fail("the message length %d does not fit its %d bit(s)" % (stated, nd.length), nd)
             self.ops.append((at, nd.length, stated))
         nbits = nbytes * 8
-        msb = self.pack.bit_order == "msb"
+        msb = self.pack.bit_order != "lsb"
+        rev = self.pack.bit_order == "msb-lsb"  # 0.22: placed as `msb`, valued as `lsb`
         acc = 0
         for start, length, v in self.ops:
-            acc |= (v & ((1 << length) - 1)) << (nbits - start - length if msb else start)
+            v &= (1 << length) - 1
+            if rev:
+                v = reverse_bits(v, length)
+            acc |= v << (nbits - start - length if msb else start)
         return acc.to_bytes(nbytes, "big" if msb else "little").hex()
 
 
