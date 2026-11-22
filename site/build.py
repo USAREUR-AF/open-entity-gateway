@@ -11,6 +11,8 @@
 3. Measures the numbers on the page from the tree and fails if site/index.html
    states anything else, or if the CoT event the page shows without JavaScript
    is not the one the gateway prints.
+4. Runs site/fitcheck.py: in headless Chrome at 1440 and 390 px, no command box
+   is cut off, and no output box at 1440 px.
 """
 
 import glob
@@ -168,7 +170,7 @@ def main():
     with open(os.path.join(SITE, "index.html")) as f:
         page = f.read()
     bad = 0
-    shown = re.search(r'<pre class="out" id="out-static"><code>(.*?)</code></pre>', page, re.S)
+    shown = re.search(r'<pre class="out" id="out-static"[^>]*><code>(.*?)</code></pre>', page, re.S)
     if not shown or html.unescape(shown.group(1)).strip() != outputs["cot"]:
         print("site/index.html: the static CoT event is not what the gateway prints:\n" + outputs["cot"])
         bad += 1
@@ -184,7 +186,7 @@ def main():
     if bad:
         return 1
     print("site: numbers match the tree:", ", ".join(f"{k}={v}" for k, v in measured.items()))
-    return 0
+    return subprocess.run([sys.executable, "-I", os.path.join(SITE, "fitcheck.py"), SITE, "index.html"]).returncode  # noqa: S603
 
 
 if __name__ == "__main__":
