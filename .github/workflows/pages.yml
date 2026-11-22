@@ -57,10 +57,10 @@ jobs:
         run: |
           python -m pip install --require-hashes -r requirements/runtime.txt
           python -m pip install --no-deps -e . -e vendors/lattice
-      - name: gather the payloads and figures, check the numbers
+      - name: gather the payloads and figures, check the numbers and the command boxes
         run: python site/build.py
       - name: leave out what is not part of the page
-        run: rm -rf site/.preview site/build.py site/README.md site/.gitignore
+        run: rm -rf site/.preview site/build.py site/fitcheck.py site/README.md site/.gitignore
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site

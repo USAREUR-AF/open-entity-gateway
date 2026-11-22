@@ -13,6 +13,11 @@ One static page: no framework, no external requests, no web fonts.
 | `assets/icon.svg` | the page icon |
 | `assets/from-tree/` | git-ignored; written by `build.py`: `hero.json` and the two figures from `docs/img/` |
 | `build.py` | gathers `assets/from-tree/` and checks the page against the tree |
+| `fitcheck.py` | run by `build.py`: loads the page in headless Chrome at 1440 and 390 px and fails when a command box is cut off |
+
+## Command and output boxes
+
+Every `<pre>` on the page is marked `data-box="command"` or `data-box="output"`. A command box shows the whole command at any width: it wraps at spaces, each line of it a `<span class="ln">` with a hanging indent, and Copy copies the exact text. An output box fits at 1440 px with no sideways scroll. `fitcheck.py` checks both; it needs Chrome (`$CHROME`, or `google-chrome` / `chromium` on the path) and fails without one under CI.
 
 ## Preview
 

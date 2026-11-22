@@ -49,20 +49,20 @@ lattice:
         <a class="btn" href="#run">Run a bridge</a>
         <a class="btn" href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/mapping.md">Mapping files</a>
       </div>
-      <div class="cmd"><pre><span class="dollar">$ </span><code id="c-print">open-entity-gateway print --mapping mappings --adapter lattice examples/records/weather-station.records.jsonl</code></pre><button class="copy" type="button" data-copy="c-print">Copy</button></div>
+      <div class="cmd"><pre data-box="command"><span class="ln"><span class="dollar">$ </span><code id="c-print"><span class="w">open-entity-gateway</span> print <span class="w">--mapping</span> mappings <span class="w">--adapter</span> lattice <span class="w">examples/records/weather-station.records.jsonl</span></code></span></pre><button class="copy" type="button" data-copy="c-print">Copy</button></div>
     </div>
 
     <div class="bridge" role="img" aria-label="One example record, the Position message of station KX7 at latitude 64.8378, longitude -147.7164, altitude 136.5 meters, passes through the weather-station mapping file and comes out as the payload open-entity-gateway prints for each adapter: a Lattice entity, a Cursor-on-Target event and a 25-octet ASTERIX CAT062 record. The values from the record are marked in each payload.">
       <div class="sec rec"><div class="tag"><span>record</span><span id="rec-src">WX / Position, weather-station</span></div>
-        <pre id="rec">{"station_id": "KX7", "latitude": 64.8378, "longitude": -147.7164, "altitude": 136.5}</pre><i class="wire" id="w1"></i></div>
+        <pre id="rec" data-box="output">{"station_id": "KX7", "latitude": 64.8378, "longitude": -147.7164, "altitude": 136.5}</pre><i class="wire" id="w1"></i></div>
       <div class="sec map"><div class="tag"><span>mapping</span><span>mappings/weather-station.position.yml</span></div>
-        <pre id="map"><span>uid: [station_id]</span><span>position: geodetic: [latitude, longitude, altitude]</span><span>stale_minutes: 10</span></pre><i class="wire" id="w2"></i></div>
+        <pre id="map" data-box="output"><span>uid: [station_id]</span><span>position: geodetic: [latitude, longitude, altitude]</span><span>stale_minutes: 10</span></pre><i class="wire" id="w2"></i></div>
       <div class="tabs" role="tablist" aria-hidden="true" id="tabs">
         <button type="button" data-k="lattice" aria-selected="false" tabindex="-1">Lattice</button>
         <button type="button" data-k="cot" aria-selected="true" tabindex="-1">CoT</button>
         <button type="button" data-k="cat062" aria-selected="false" tabindex="-1">CAT062</button>
       </div>
-<pre class="out" id="out-static"><code>&lt;event version=&quot;2.0&quot; uid=&quot;KX7&quot; type=&quot;a-f-G&quot; time=&quot;2025-06-15T15:06:43Z&quot; start=&quot;2025-06-15T15:06:43Z&quot; stale=&quot;2025-06-15T15:16:43Z&quot; how=&quot;m-g&quot; access=&quot;Undefined&quot;&gt;&lt;point lat=&quot;64.8378&quot; lon=&quot;-147.7164&quot; hae=&quot;136.5&quot; ce=&quot;9999999&quot; le=&quot;9999999&quot;/&gt;&lt;detail&gt;&lt;contact callsign=&quot;KX7&quot;/&gt;&lt;/detail&gt;&lt;/event&gt;</code></pre>
+<pre class="out" id="out-static" data-box="output"><code>&lt;event version=&quot;2.0&quot; uid=&quot;KX7&quot; type=&quot;a-f-G&quot; time=&quot;2025-06-15T15:06:43.000Z&quot; start=&quot;2025-06-15T15:06:43.000Z&quot; stale=&quot;2025-06-15T15:16:43.000Z&quot; how=&quot;m-g&quot; access=&quot;Undefined&quot;&gt;&lt;point lat=&quot;64.8378&quot; lon=&quot;-147.7164&quot; hae=&quot;136.5&quot; ce=&quot;9999999&quot; le=&quot;9999999&quot;/&gt;&lt;detail&gt;&lt;contact callsign=&quot;KX7&quot;/&gt;&lt;/detail&gt;&lt;/event&gt;</code></pre>
       <div class="note" id="note">What <code>open-entity-gateway print</code> writes for this record, captured when the page was built. It sends nothing.</div>
     </div>
   </div>
@@ -121,11 +121,11 @@ lattice:
   <div class="wrap">
     <h2>Run a bridge</h2>
     <p class="sub">Python 3.11 or later. A configuration names each destination; there is no default. The <code>zenoh</code> command subscribes only to the key expressions given with <code>--key</code> and refuses a key made only of wildcards.</p>
-    <pre class="block">python -m venv .venv &amp;&amp; . .venv/bin/activate
-pip install --require-hashes -r requirements/runtime.txt
-pip install --no-deps -e . -e vendors/picogrid-ecn     # or vendors/lattice; then install that vendor's SDK
-open-entity-gateway check --config gateway.yml
-open-entity-gateway zenoh --config gateway.yml --zenoh-config fabric.json5 --key 'sensors/*/tracks'</pre>
+    <pre class="block" data-box="command"><span class="ln">python <span class="w">-m</span> venv .venv &amp;&amp; . <span class="w">.venv/bin/activate</span>
+</span><span class="ln">pip install <span class="w">--require-hashes</span> <span class="w">-r</span> <span class="w">requirements/runtime.txt</span>
+</span><span class="ln">pip install <span class="w">--no-deps</span> <span class="w">-e</span> . <span class="w">-e</span> <span class="w">vendors/picogrid-ecn</span>     # or <span class="w">vendors/lattice;</span> then install that vendor's SDK
+</span><span class="ln"><span class="w">open-entity-gateway</span> check <span class="w">--config</span> gateway.yml
+</span><span class="ln"><span class="w">open-entity-gateway</span> zenoh <span class="w">--config</span> gateway.yml <span class="w">--zenoh-config</span> fabric.json5 <span class="w">--key</span> <span class="w">'sensors/*/tracks'</span></span></pre>
     <p><a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/examples/gateway.yml">Example configuration</a> &middot; <a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/adapters/lattice.md">Lattice bridge</a> &middot; <a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/adapters/picogrid-ecn.md">Picogrid ECN bridge</a> &middot; <a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/vendors.md">Adding a vendor</a></p>
     <h3 style="margin-top:36px">Neutrality</h3>
     <p class="sub">Named products and companies appear only to state which published interface a bridge speaks, as described by their owners. No endorsement by or of any company, product or government is implied. All trademarks belong to their owners. A bridge requires the user to obtain and accept that vendor's license; this project distributes no vendor software. Vendors are listed alphabetically, and bridges for other vendors are welcome.</p>
