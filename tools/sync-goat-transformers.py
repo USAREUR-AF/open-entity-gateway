@@ -3,7 +3,7 @@ into src/open_entity_gateway/_goat_transformers, or check the copy.
 
 goat-transformers is not published on a package index, and the gateway
 installs only hash-locked packages, so the engine (standard library only)
-and its four model modules and four packs are copied at one commit, as
+its four packs and the model modules they use are copied at one commit, as
 open-billie copies its packs. COMMIT names the commit and SHA256SUMS lists
 every copied file.
 
@@ -29,8 +29,38 @@ DEST = ROOT / "src" / "open_entity_gateway" / "_goat_transformers"
 # 0.29 licence.py; a fixed list failed to load the packs each time).
 ENGINE_DIR = "engines/python/src/goat_transformers"
 NOT_COPIED = {"__main__.py", "cli.py"}
-MODELS = ["core", "track", "cat062", "sapient"]
 PACKS = ["canonical-track-v2", "cot-xml", "asterix-cat062", "sapient"]
+# The model modules are not listed: they are `core` and every module a `uses` line of a copied
+# pack names, and every module those modules use in turn, read from the checkout. A fixed list
+# failed to load cot-xml when it began to use the new `cot` module (goat-transformers #463).
+
+
+def uses(text: str) -> list[str]:
+    """The modules named by the `uses` lines of a pack or model module."""
+    return [line.split()[1] for line in text.splitlines() if line.split()[:1] == ["uses"] and len(line.split()) > 1]
+
+
+def models(source: Path) -> list[str]:
+    """`core`, and every module the copied packs use, directly or through another module."""
+    todo = ["core"] + [m for p in PACKS for m in uses((source / "packs" / p / "pack.def").read_text())]
+    seen: set[str] = set()
+    while todo:
+        m = todo.pop()
+        if m not in seen:
+            seen.add(m)
+            todo.extend(uses((source / "model" / f"{m}.def").read_text()))
+    return sorted(seen)
+
+
+def missing_modules(data: Path) -> list[str]:
+    """Each `uses` of a copied pack or module that names no module of the copy."""
+    have = {p.stem for p in (data / "model").glob("*.def")}
+    out = [] if "core" in have else ["model/core.def: missing (every pack uses core)"]
+    for path in sorted(data.glob("packs/*/pack.def")) + sorted(data.glob("model/*.def")):
+        for m in uses(path.read_text()):
+            if m not in have:
+                out.append(f"{path.relative_to(data)}: uses {m}, and model/{m}.def is not copied")
+    return out
 
 
 def files(source: Path) -> dict[str, Path]:
@@ -38,7 +68,7 @@ def files(source: Path) -> dict[str, Path]:
     engine = source / ENGINE_DIR
     names = sorted(p.name for p in engine.glob("*.py") if p.name not in NOT_COPIED)
     out = {f"engine/{name}": engine / name for name in names}
-    out.update({f"data/model/{m}.def": source / "model" / f"{m}.def" for m in MODELS})
+    out.update({f"data/model/{m}.def": source / "model" / f"{m}.def" for m in models(source)})
     out.update({f"data/packs/{p}/pack.def": source / "packs" / p / "pack.def" for p in PACKS})
     return out
 
@@ -64,6 +94,7 @@ def check(source: Path | None) -> int:
             bad.append(f"{name}: listed but missing")
         elif digest(path) != sha:
             bad.append(f"{name}: differs from SHA256SUMS")
+    bad.extend(missing_modules(DEST / "data"))
     if source is not None:
         commit = subprocess.run(
             ["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True
