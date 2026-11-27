@@ -38,7 +38,8 @@ python -m pytest
 | a dependency | edit `requirements/*.in`, then `uv pip compile --generate-hashes` for each `.txt` |
 | anything, before publishing | first-bite's leak check, `tools/check-public-tree.sh`, with the maintainers' needle list |
 
-CI never installs a vendor SDK.
+CI's checks never install a vendor SDK. The release archive of a bridge whose SDK may be redistributed carries that SDK
+(`packaging/`, [RELEASING.md](RELEASING.md)); its CI job builds the archive apart from the checks.
 
 ## Status words
 

@@ -1,0 +1,23 @@
+#!/usr/bin/python3 -I
+# SPDX-License-Identifier: Apache-2.0
+# The command of a bridge's release archive (packaging/build-archive.sh). It runs the
+# core and the bridge from the archive's own lib/, with the system's python3 in isolated
+# mode, so nothing from the host's site-packages, environment or working directory is
+# imported. The archive's native wheels are built for one Python; any other is refused.
+import os
+import sys
+
+here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+with open(os.path.join(here, "PYTHON"), encoding="ascii") as f:
+    want = f.read().strip()
+have = "{}.{}".format(*sys.version_info[:2])
+if have != want:
+    sys.exit(f"open-entity-gateway: this archive is built for Python {want}; /usr/bin/python3 is {have}")
+# -I leaves the interpreter's own site directories (dist-packages) on the path: a module the
+# archive does not carry must not load from the host's packages.
+sys.path[:] = [p for p in sys.path if not p.endswith(("site-packages", "dist-packages"))]
+sys.path.insert(0, os.path.join(here, "lib"))
+
+from open_entity_gateway.cli import main  # noqa: E402
+
+sys.exit(main())

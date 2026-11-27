@@ -1,0 +1,46 @@
+# The @BRIDGE@ vendor bridge, from its release archive (packaging/install.sh installs it).
+# Its configuration is the host's own: /etc/vendor-bridges/@BRIDGE@.yml (destinations and
+# mappings), /etc/vendor-bridges/fabric.json5 (the Zenoh client configuration) and
+# /etc/vendor-bridges/@BRIDGE@.env, which sets VENDOR_BRIDGES_KEYS (one or more
+# "--key <key expression>") and any variable the vendor's SDK reads.
+[Unit]
+Description=vendor bridge @BRIDGE@: tracks from the goat fabric to a vendor system
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/vendor-bridges/@BRIDGE@.yml
+ConditionPathExists=/etc/vendor-bridges/fabric.json5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+User=vendor-bridges
+Group=vendor-bridges
+EnvironmentFile=/etc/vendor-bridges/@BRIDGE@.env
+Environment=HOME=/var/lib/vendor-bridges/@BRIDGE@
+StateDirectory=vendor-bridges/@BRIDGE@
+ExecStartPre=/opt/vendor-bridges/@BRIDGE@/current/bin/open-entity-gateway check --config /etc/vendor-bridges/@BRIDGE@.yml
+ExecStart=/opt/vendor-bridges/@BRIDGE@/current/bin/open-entity-gateway zenoh --config /etc/vendor-bridges/@BRIDGE@.yml --zenoh-config /etc/vendor-bridges/fabric.json5 $VENDOR_BRIDGES_KEYS
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadOnlyPaths=/etc/vendor-bridges /opt/vendor-bridges
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+ProtectClock=true
+ProtectProc=invisible
+UMask=0077
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target
