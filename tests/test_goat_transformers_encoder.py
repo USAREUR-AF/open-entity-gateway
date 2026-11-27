@@ -167,6 +167,61 @@ def test_the_copied_engine_matches_its_sums() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def sync_tool() -> Any:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sync_goat_transformers", ROOT / "tools" / "sync-goat-transformers.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_module_a_copied_pack_uses_is_copied() -> None:
+    from open_entity_gateway import library
+
+    assert sync_tool().missing_modules(library.DATA) == []
+
+
+def test_a_module_a_pack_uses_and_the_copy_lacks_is_named(tmp_path: Any) -> None:
+    import shutil
+
+    from open_entity_gateway import library
+
+    data = tmp_path / "data"
+    shutil.copytree(library.DATA, data)
+    (data / "packs" / "cot-xml" / "pack.def").write_text(
+        (data / "packs" / "cot-xml" / "pack.def")
+        .read_text()
+        .replace("uses    track", "uses    never-copied\nuses    track", 1)
+    )
+    (data / "model" / "cat062.def").unlink()
+    assert sync_tool().missing_modules(data) == [
+        "packs/asterix-cat062/pack.def: uses cat062, and model/cat062.def is not copied",
+        "packs/cot-xml/pack.def: uses never-copied, and model/never-copied.def is not copied",
+    ]
+
+
+def test_the_models_copied_are_those_the_packs_use(tmp_path: Any) -> None:
+    root = tmp_path / "gt"
+    for name, text in {
+        "packs/canonical-track-v2/pack.def": "format a\nuses track\n",
+        "packs/cot-xml/pack.def": "format b\nuses cot\nuses track\n",
+        "packs/asterix-cat062/pack.def": "format c\nuses cat062\n",
+        "packs/sapient/pack.def": "format d\nuses sapient\n",
+        "model/core.def": "module core\n",
+        "model/track.def": "module track\n",
+        "model/cot.def": "module cot\n",
+        "model/cat062.def": "module cat062\nuses track\n",
+        "model/sapient.def": "module sapient\nuses track\n",
+        "model/radar.def": "module radar\n",
+    }.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text)
+    assert sync_tool().models(root) == ["cat062", "core", "cot", "sapient", "track"]
+
+
 def test_an_unknown_encoder_is_refused() -> None:
     from open_entity_gateway.adapter import ConfigError
 
