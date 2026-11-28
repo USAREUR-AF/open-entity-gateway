@@ -40,17 +40,33 @@ destinations:
   - name: smoke
     adapter: $bridge
 YML
-# No network: in a namespace of its own, where the machine allows one.
+# No network: in a network namespace of its own, as this user. An unprivileged user namespace
+# where the machine allows one; else, where sudo needs no password (CI, whose runners refuse
+# unprivileged user namespaces), a namespace root makes, dropping back to this user. In CI a
+# run with the network is a failure; elsewhere it is said and the check goes on.
 nonet=()
-if unshare -rn true 2>/dev/null; then nonet=(unshare -rn); else echo "smoke-test: no user namespace here; check runs with the network"; fi
-(cd / && env -i PATH=/usr/bin:/bin "${nonet[@]}" "$a/bin/open-entity-gateway" --help >/dev/null) || fail "the command does not run"
+if unshare -rn true 2>/dev/null; then
+  nonet=(unshare -rn)
+elif sudo -n unshare -n setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups true 2>/dev/null; then
+  nonet=(sudo -n unshare -n setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups)
+elif [ -n "${CI:-}" ]; then
+  fail "no network namespace can be made here, so the archive cannot be checked offline"
+else
+  echo "smoke-test: no network namespace here; check runs with the network"
+fi
+# Prove the namespace has no network before relying on it.
+if [ "${#nonet[@]}" -gt 0 ]; then
+  "${nonet[@]}" /usr/bin/python3 -I -c 'import socket; socket.create_connection(("1.1.1.1", 53), timeout=3)' 2>/dev/null \
+    && fail "the namespace for the check reaches the network"
+fi
+(cd / && "${nonet[@]}" env -i PATH=/usr/bin:/bin "$a/bin/open-entity-gateway" --help >/dev/null) || fail "the command does not run"
 [ ! -e "$a/lib/anduril" ] || fail "the archive carries an SDK that may not be redistributed"
 # Every requirement of every distribution, for this Python, is in lib/.
 /usr/bin/python3 -I "$here/requires_check.py" "$a/lib" || fail "a declared requirement is missing from lib/"
 # A stand-in SDK configuration: validated by the SDK, used for no connection.
-(cd / && env -i PATH=/usr/bin:/bin ECN_AUTH=bearer ECN_BEARER_TOKEN=smoke-test ECN_MQTT_USERNAME=smoke-test \
-  ECN_HOST=broker.example.org ECN_INTEGRATION_NAME=smoke-test \
-  "${nonet[@]}" "$a/bin/open-entity-gateway" check --config "$work/check.yml") | tee "$work/check.out"
+(cd / && "${nonet[@]}" env -i PATH=/usr/bin:/bin ECN_AUTH=bearer ECN_BEARER_TOKEN=smoke-test \
+  ECN_MQTT_USERNAME=smoke-test ECN_HOST=broker.example.org ECN_INTEGRATION_NAME=smoke-test \
+  "$a/bin/open-entity-gateway" check --config "$work/check.yml") | tee "$work/check.out"
 grep -qx "destination smoke: $bridge" "$work/check.out" || fail "check did not load the $bridge destination"
 
 for info in "$a"/lib/*.dist-info; do

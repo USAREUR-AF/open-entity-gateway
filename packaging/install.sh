@@ -49,8 +49,10 @@ if [ "$root" = / ]; then
   case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
   case "$(basename "$here")" in *"_linux_$arch") ;; *) die "this archive is not for $arch" ;; esac
   # The unpacked tree and the directory above it: root's, and writable by root alone.
-  bad="$(find "$here" "$(dirname "$here")" -maxdepth 0 \( ! -user 0 -o -perm /022 \) -print; find "$here" \( ! -user 0 -o -perm /022 \) -print | head -3)"
-  [ -z "$bad" ] || die "unpack the archive as root into a directory only root can write; not root's alone: $(printf '%s' "$bad" | head -1)"
+  # -quit, not a pipe into head: under pipefail a find cut short by head fails the script.
+  bad="$(find "$here" "$(dirname "$here")" -maxdepth 0 \( ! -user 0 -o -perm /022 \) -print -quit)"
+  [ -n "$bad" ] || bad="$(find "$here" \( ! -user 0 -o -perm /022 \) -print -quit)"
+  [ -z "$bad" ] || die "unpack the archive as root into a directory only root can write; not root's alone: $bad"
 fi
 
 opt="${root%/}/opt/vendor-bridges/$bridge"
