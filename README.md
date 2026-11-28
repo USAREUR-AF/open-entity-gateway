@@ -36,7 +36,11 @@ alphabetically; their presence is not a preference, and bridges for other vendor
 
 ## Run a bridge
 
-Python 3.11 or later.
+From a release: the Picogrid ECN bridge is released as one archive per architecture for Ubuntu 24.04, with every
+dependency and its SDK, a service unit and an installer, signed; nothing needs the network where it is installed
+([RELEASING.md](RELEASING.md)). The Lattice bridge is installed from a checkout, as below.
+
+From a checkout: Python 3.11 or later.
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
@@ -63,7 +67,9 @@ python -m pytest tests vendors/lattice/tests
 
 Named products and companies appear only to state which published interface a bridge speaks, as described by their owners.
 No endorsement by or of any company, product or government is implied. All trademarks belong to their owners. A bridge
-requires the user to obtain and accept that vendor's licence; this project distributes no vendor software.
+requires the user to obtain and accept that vendor's licence. A release archive carries a vendor SDK only where its licence allows it to be
+redistributed, unmodified and with that licence (the Picogrid ECN SDK, MPL-2.0); otherwise this project distributes no vendor software
+([RELEASING.md](RELEASING.md)).
 
 ## Licence
 

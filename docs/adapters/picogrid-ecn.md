@@ -59,3 +59,15 @@ python -m pytest vendors/picogrid-ecn/tests
 ```
 
 CI does not install the SDK.
+
+## From a release
+
+The bridge is released as `vendor-bridges-picogrid-ecn_<version>_linux_<arch>.tar.gz` for Ubuntu 24.04 (amd64,
+arm64), with the shared core, every dependency and the SDK (MPL-2.0, unmodified, with its licence), a service unit and
+an installer, and `SHA256SUMS` signed keylessly ([RELEASING.md](../../RELEASING.md)). The SDK reads its configuration
+from a profile or its `ECN_*` variables, set in `/etc/vendor-bridges/picogrid-ecn.env` (the archive's `INSTALL.md`).
+
+| Part | Status |
+|---|---|
+| the archive: built from the hash-locked requirements, runs with an empty environment, loads the bridge and SDK, installs as root with its unit loaded | built; checked on each architecture by `packaging/smoke-test.sh` in the release workflow |
+| the service against an ECN | not measured from a release archive |

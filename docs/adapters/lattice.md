@@ -72,3 +72,9 @@ python -m pytest vendors/lattice/tests
 ```
 
 Without the SDK the four entity tests run and the five publishing tests are skipped. CI does not install the SDK.
+
+## Not in a release archive
+
+The SDK's licence does not allow it to be redistributed, so no release archive carries this bridge
+([RELEASING.md](../../RELEASING.md)). Install the bridge and the SDK by hand from a checkout, after accepting the SDK's
+licence, as above.

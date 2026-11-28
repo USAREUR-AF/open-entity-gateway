@@ -1,0 +1,4 @@
+# Bridges whose vendor SDK may be redistributed, so a release archive may carry it with its
+# notice (RELEASING.md). One name per line, a directory under vendors/. A bridge whose SDK
+# may not be redistributed is never listed: its users install the SDK by hand.
+picogrid-ecn
