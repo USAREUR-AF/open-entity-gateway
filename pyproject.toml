@@ -32,7 +32,7 @@ zenoh = ["eclipse-zenoh==1.9.0"]
 open-entity-gateway = "open_entity_gateway.cli:main"
 
 [project.urls]
-Source = "https://github.com/USAREUR-AF/open-entity-gateway"
+Source = "https://github.com/USAREUR-AF/vendor-bridges"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/open_entity_gateway"]

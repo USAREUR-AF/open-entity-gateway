@@ -19,7 +19,7 @@
     <a class="brand" href="#top"><img src="assets/icon.svg" width="28" height="28" alt="">open-entity-gateway</a>
     <nav aria-label="Sections">
       <a href="#what">What it is</a><a href="#moving">What is moving</a><a href="#run">Run</a>
-      <a class="gh" href="https://github.com/USAREUR-AF/open-entity-gateway">GitHub</a>
+      <a class="gh" href="https://github.com/USAREUR-AF/vendor-bridges">GitHub</a>
     </nav>
   </header>
 </div>
@@ -50,9 +50,9 @@ lattice:
       <p class="tagline">Bridges between the goat fabric and vendor systems.</p>
       <p class="lede">Each bridge is its own package that speaks one vendor's software kit: Anduril Lattice and Picogrid ECN today. A mapping file says how a record becomes a track; the bridge sends it in the vendor's form.</p>
       <div class="buttons">
-        <a class="btn star" href="https://github.com/USAREUR-AF/open-entity-gateway"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.3L12 17.3l-5.7 3 1.1-6.3-4.6-4.5 6.4-.9z"/></svg>Star on GitHub</a>
+        <a class="btn star" href="https://github.com/USAREUR-AF/vendor-bridges"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.3L12 17.3l-5.7 3 1.1-6.3-4.6-4.5 6.4-.9z"/></svg>Star on GitHub</a>
         <a class="btn" href="#run">Run a bridge</a>
-        <a class="btn" href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/mapping.md">Mapping files</a>
+        <a class="btn" href="https://github.com/USAREUR-AF/vendor-bridges/blob/main/docs/mapping.md">Mapping files</a>
       </div>
       <div class="cmd"><pre data-box="command"><span class="ln"><span class="dollar">$ </span><code id="c-print"><span class="w">open-entity-gateway</span> print <span class="w">--mapping</span> mappings <span class="w">--adapter</span> lattice <span class="w">examples/records/weather-station.records.jsonl</span></code></span></pre><button class="copy" type="button" data-copy="c-print">Copy</button></div>
     </div>
@@ -131,7 +131,7 @@ lattice:
 </span><span class="ln">pip install <span class="w">--no-deps</span> <span class="w">-e</span> . <span class="w">-e</span> <span class="w">vendors/picogrid-ecn</span>     # or <span class="w">vendors/lattice;</span> then install that vendor's SDK
 </span><span class="ln"><span class="w">open-entity-gateway</span> check <span class="w">--config</span> gateway.yml
 </span><span class="ln"><span class="w">open-entity-gateway</span> zenoh <span class="w">--config</span> gateway.yml <span class="w">--zenoh-config</span> fabric.json5 <span class="w">--key</span> <span class="w">'sensors/*/tracks'</span></span></pre>
-    <p><a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/examples/gateway.yml">Example configuration</a> &middot; <a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/adapters/lattice.md">Lattice bridge</a> &middot; <a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/adapters/picogrid-ecn.md">Picogrid ECN bridge</a> &middot; <a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/docs/vendors.md">Adding a vendor</a></p>
+    <p><a href="https://github.com/USAREUR-AF/vendor-bridges/blob/main/examples/gateway.yml">Example configuration</a> &middot; <a href="https://github.com/USAREUR-AF/vendor-bridges/blob/main/docs/adapters/lattice.md">Lattice bridge</a> &middot; <a href="https://github.com/USAREUR-AF/vendor-bridges/blob/main/docs/adapters/picogrid-ecn.md">Picogrid ECN bridge</a> &middot; <a href="https://github.com/USAREUR-AF/vendor-bridges/blob/main/docs/vendors.md">Adding a vendor</a></p>
     <h3 style="margin-top:36px">Neutrality</h3>
     <p class="sub">Named products and companies appear only to state which published interface a bridge speaks, as described by their owners. No endorsement by or of any company, product or government is implied. All trademarks belong to their owners. A bridge requires the user to obtain and accept that vendor's license; this project distributes no vendor software. Vendors are listed alphabetically, and bridges for other vendors are welcome.</p>
   </div>
@@ -140,7 +140,7 @@ lattice:
 
 <footer>
   <div class="wrap">
-    <p><a href="https://github.com/USAREUR-AF/open-entity-gateway">Repository</a><a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/LICENSE">Apache License 2.0</a><a href="https://github.com/USAREUR-AF/open-entity-gateway/blob/main/SECURITY.md">Security policy</a></p>
+    <p><a href="https://github.com/USAREUR-AF/vendor-bridges">Repository</a><a href="https://github.com/USAREUR-AF/vendor-bridges/blob/main/LICENSE">Apache License 2.0</a><a href="https://github.com/USAREUR-AF/vendor-bridges/blob/main/SECURITY.md">Security policy</a></p>
     <p>Part of <a href="https://github.com/USAREUR-AF/goatcore">goat</a>.</p>
   </div>
 </footer>
